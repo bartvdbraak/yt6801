@@ -1,20 +1,26 @@
-/*++
-
-Copyright (c) 2021 Motorcomm Corporation. 
-Confidential and Proprietary. All rights reserved.
-
-This is Motorcomm Corporation NIC driver relevant files. Please don't copy, modify,
-distribute without commercial permission.
-
---*/
-
+// SPDX-License-Identifier: GPL-2.0+
+/* Copyright (c) 2021 Motor-comm Corporation.
+ * Confidential and Proprietary. All rights reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ */
 
 #include "fuxi-gmac.h"
 #include "fuxi-gmac-reg.h"
 
-#if defined(UEFI)
-#include "nic_sw.h"
-#elif defined(_WIN32) || defined(_WIN64)
+#ifdef FXGMAC_USE_ADAPTER_HANDLE
 #include "fuxi-mp.h"
 #endif
 
@@ -406,9 +412,6 @@ static int fxgmac_alloc_channels(struct fxgmac_pdata *pdata)
     if (!channel_head)
     	return ret;
 
-    netif_dbg(pdata, drv, pdata->netdev,
-    	  "channel_head=%p\n", channel_head);
-
     tx_ring = kcalloc(pdata->tx_ring_count, sizeof(struct fxgmac_ring),
     		  GFP_KERNEL);
     if (!tx_ring)
@@ -468,11 +471,6 @@ static int fxgmac_alloc_channels(struct fxgmac_pdata *pdata)
 
     	if (i < pdata->rx_ring_count)
     		channel->rx_ring = rx_ring++;
-
-    	netif_dbg(pdata, drv, pdata->netdev,
-    		  "%s: dma_regs=%p, tx_ring=%p, rx_ring=%p\n",
-    		  channel->name, channel->dma_regs,
-    		  channel->tx_ring, channel->rx_ring);
     }
 
     pdata->channel_head = channel_head;
@@ -491,6 +489,38 @@ err_tx_ring:
 
     DPRINTK("fxgmac alloc_channels callout err,%d\n",ret);
     return ret;
+}
+#elif defined(UBOOT) || defined(KDNET)
+static int fxgmac_alloc_channels(struct fxgmac_pdata* pdata)
+{
+    struct fxgmac_channel* channel;
+    unsigned int i;
+
+    for (i = 0; i < pdata->channel_count; i++)
+    {
+        //snprintf(channel->name, sizeof(channel->name), "channel-%u", i);
+        //RtlStringCchPrintfA(channel->name, sizeof(channel->name), "channel-%u"     , i);
+              //netif_dbg(pdata, drv, pdata->netdev,"channel-%u\n", i);
+        channel = pdata->channel_head;
+
+        channel->pdata = pdata;
+        channel->queue_index = i;
+        channel->dma_regs = pdata->mac_regs + DMA_CH_BASE +
+            (DMA_CH_INC * i);
+
+        /* set tx/rx channel*/
+#if 1
+        pdata->expansion.tx_channel = pdata->channel_head;
+
+        pdata->expansion.rx_channel = pdata->channel_head;
+#else
+        if (i == 0)
+            pdata->tx_channel = &pdata->channel_head[i];
+        else
+            pdata->rx_channel = &pdata->channel_head[i];
+#endif
+    }
+    return 0;
 }
 #elif defined(_WIN32) || defined(_WIN64)
 static int fxgmac_alloc_channels(struct fxgmac_pdata* pdata)
@@ -572,38 +602,6 @@ err_irq:
 
     return ret;
 
-}
-#elif defined(UBOOT)
-static int fxgmac_alloc_channels(struct fxgmac_pdata* pdata)
-{
-     struct fxgmac_channel * channel;
-     unsigned int i;
-
-     for (i = 0; i < pdata->channel_count; i++) 
-     {
-         //snprintf(channel->name, sizeof(channel->name), "channel-%u", i);
-         //RtlStringCchPrintfA(channel->name, sizeof(channel->name), "channel-%u"     , i);
-               //netif_dbg(pdata, drv, pdata->netdev,"channel-%u\n", i);
-         channel = pdata->channel_head;
-
-         channel->pdata = pdata;
-         channel->queue_index = i;
-         channel->dma_regs = pdata->mac_regs + DMA_CH_BASE +
-             (DMA_CH_INC * i);
-
-         /* set tx/rx channel*/
-#if 1
-         pdata->expansion.tx_channel = pdata->channel_head;
-
-         pdata->expansion.rx_channel = pdata->channel_head;
-#else
-         if(i == 0)
-             pdata->tx_channel = &pdata->channel_head[i];
-         else
-             pdata->rx_channel = &pdata->channel_head[i];
-#endif
-    }
-    return 0;
 }
 #else
 static struct fxgmac_channel fx_channel[4];
@@ -840,7 +838,7 @@ static int fxgmac_map_rx_buffer(struct fxgmac_pdata* pdata,
 }
 
 #ifdef UBOOT
-static void yt6801_desc_reset(struct fxgmac_dma_desc *desc_data)
+static void fxgmac_desc_reset(struct fxgmac_dma_desc *desc_data)
 {
     /* Reset the Tx descriptor
      *   Set buffer 1 (lo) address to zero
@@ -857,10 +855,10 @@ static void yt6801_desc_reset(struct fxgmac_dma_desc *desc_data)
     //dma_wmb();
 }
 
-static void fxgmac_hw_tx_desc_init(struct fxgmac_channel *channel)
+static void fxgmac_tx_desc_init(struct fxgmac_pdata* pdata)
 {
+    struct fxgmac_channel *channel = pdata->expansion.tx_channel;
     struct fxgmac_dma_desc *desc_data;
-    struct fxgmac_pdata * pdata = channel->pdata;
     unsigned int i;
 
     /* Initialize all descriptors */
@@ -868,8 +866,8 @@ static void fxgmac_hw_tx_desc_init(struct fxgmac_channel *channel)
         desc_data = pdata->expansion.tx_desc_list + i;
 
         /* Initialize Tx descriptor */
-        yt6801_desc_reset(desc_data);
-    }
+        fxgmac_desc_reset(desc_data);
+    }	
 
     ///* Update the total number of Tx descriptors */
     writereg(pdata->pAdapter, NIC_DEF_TBDS - 1, FXGMAC_DMA_REG(channel, DMA_CH_TDRLR));
@@ -895,16 +893,12 @@ static void fxgmac_hw_tx_desc_init(struct fxgmac_channel *channel)
     DbgPrintF(MP_TRACE, "Read tx starting low address:%x\n",
 		    readreg(pdata->pAdapter, FXGMAC_DMA_REG(channel, DMA_CH_TDLR_LO)));
 #endif
+
 }
 
-static void fxgmac_tx_desc_init(struct fxgmac_pdata* pdata)
+static void fxgmac_rx_desc_init(struct fxgmac_pdata* pdata)
 {
-    fxgmac_hw_tx_desc_init(pdata->expansion.tx_channel);
-}
-
-static void fxgmac_hw_rx_desc_init(struct fxgmac_channel *channel)
-{
-    struct fxgmac_pdata *pdata = channel->pdata;
+    struct fxgmac_channel * channel = pdata->expansion.rx_channel;
     struct fxgmac_dma_desc *desc_data;
     unsigned int i;
     uint64_t   HwRbdPa;
@@ -914,7 +908,7 @@ static void fxgmac_hw_rx_desc_init(struct fxgmac_channel *channel)
         desc_data = pdata->expansion.rx_desc_list + i;
 
         /* Initialize Rx descriptor */
-        yt6801_desc_reset(desc_data);
+        fxgmac_desc_reset(desc_data);
         desc_data->desc0 = lower_32_bits(bus_to_phys(pdata->pdev, (pci_addr_t)(unsigned long)(pdata->expansion.rx_buffer)));
         desc_data->desc1 = upper_32_bits(bus_to_phys(pdata->pdev, (pci_addr_t)(unsigned long)(pdata->expansion.rx_buffer)));
 	    desc_data->desc3 = FXGMAC_SET_REG_BITS_LE(
@@ -962,24 +956,89 @@ static void fxgmac_hw_rx_desc_init(struct fxgmac_channel *channel)
     /* Update the Rx Descriptor Tail Pointer */
     writereg(pdata->pAdapter, lower_32_bits((unsigned long)HwRbdPa), FXGMAC_DMA_REG(channel, DMA_CH_RDTR_LO));
 
-}
 
-
-static void fxgmac_rx_desc_init(struct fxgmac_pdata* pdata)
-{
-    fxgmac_hw_rx_desc_init(pdata->expansion.rx_channel);
 }
 
 #else
+static void fxgmac_tx_desc_reset(struct fxgmac_desc_data* desc_data)
+{
+    struct fxgmac_dma_desc* dma_desc = desc_data->dma_desc;
+
+     /* Reset the Tx descriptor
+     *   Set buffer 1 (lo) address to zero
+     *   Set buffer 1 (hi) address to zero
+     *   Reset all other control bits (IC, TTSE, B2L & B1L)
+     *   Reset all other control bits (OWN, CTXT, FD, LD, CPC, CIC, etc)
+     */
+    dma_desc->desc0 = 0;
+    dma_desc->desc1 = 0;
+    dma_desc->desc2 = 0;
+    dma_desc->desc3 = 0;
+
+    /* Make sure ownership is written to the descriptor */
+    dma_wmb();
+}
+
+static void fxgmac_tx_desc_init_channel(struct fxgmac_channel* channel)
+{
+#ifndef KDNET   
+    struct fxgmac_ring* ring = channel->tx_ring;
+    struct fxgmac_desc_data* desc_data;
+    int start_index = ring->cur;
+    unsigned int i;
+    start_index = start_index;
+    /* Initialize all descriptors */
+    for (i = 0; i < ring->dma_desc_count; i++) {
+        desc_data = FXGMAC_GET_DESC_DATA(ring, i);
+
+        /* Initialize Tx descriptor */
+        fxgmac_tx_desc_reset(desc_data);
+    }
+#endif
+
+    ///* Update the total number of Tx descriptors */
+    //writereg(ring->dma_desc_count - 1, FXGMAC_DMA_REG(channel, DMA_CH_TDRLR));
+
+    writereg(channel->pdata->pAdapter, channel->pdata->tx_desc_count - 1, FXGMAC_DMA_REG(channel, DMA_CH_TDRLR));
+
+    /* Update the starting address of descriptor ring */
+#if defined(LINUX)
+    desc_data = FXGMAC_GET_DESC_DATA(ring, start_index);
+    writereg(channel->pdata->pAdapter, upper_32_bits(desc_data->dma_desc_addr),
+        FXGMAC_DMA_REG(channel, DMA_CH_TDLR_HI));
+    writereg(channel->pdata->pAdapter, lower_32_bits(desc_data->dma_desc_addr),
+        FXGMAC_DMA_REG(channel, DMA_CH_TDLR_LO));
+#elif defined(UEFI)
+    writereg(channel->pdata->pAdapter, GetPhyAddrHigh(((PADAPTER)channel->pdata->pAdapter)->TbdPhyAddr),//adpt->TbdPhyAddr
+        FXGMAC_DMA_REG(channel, DMA_CH_TDLR_HI));
+    writereg(channel->pdata->pAdapter, GetPhyAddrLow(((PADAPTER)channel->pdata->pAdapter)->TbdPhyAddr),
+        FXGMAC_DMA_REG(channel, DMA_CH_TDLR_LO));
+#elif defined(PXE)
+
+#elif defined(UBOOT)
+
+#elif defined(DPDK)
+
+#elif defined(KDNET)
+    writereg(channel->pdata->pAdapter, upper_32_bits(((PMOTORCOMM_ADAPTER)channel->pdata->pAdapter)->TbdPhyAddr),
+        FXGMAC_DMA_REG(channel, DMA_CH_TDLR_HI));
+    writereg(channel->pdata->pAdapter, lower_32_bits(((PMOTORCOMM_ADAPTER)channel->pdata->pAdapter)->TbdPhyAddr),
+        FXGMAC_DMA_REG(channel, DMA_CH_TDLR_LO));
+#else //netadaptercx & ndis
+    writereg(channel->pdata->pAdapter, NdisGetPhysicalAddressHigh(((PMP_ADAPTER)channel->pdata->pAdapter)->HwTbdBasePa),
+        FXGMAC_DMA_REG(channel, DMA_CH_TDLR_HI));
+    writereg(channel->pdata->pAdapter, NdisGetPhysicalAddressLow(((PMP_ADAPTER)channel->pdata->pAdapter)->HwTbdBasePa),
+        FXGMAC_DMA_REG(channel, DMA_CH_TDLR_LO));
+#endif
+}
+
 static void fxgmac_tx_desc_init(struct fxgmac_pdata* pdata)
 {
 #ifndef LINUX
-    struct fxgmac_hw_ops* hw_ops = &pdata->hw_ops;
     struct fxgmac_channel* channel;
     channel = pdata->channel_head;
-    hw_ops->tx_desc_init(channel);
+    fxgmac_tx_desc_init_channel(channel);
 #else
-    struct fxgmac_hw_ops *hw_ops = &pdata->hw_ops;
     struct fxgmac_desc_data *desc_data;
     struct fxgmac_dma_desc *dma_desc;
     struct fxgmac_channel *channel;
@@ -1013,25 +1072,183 @@ static void fxgmac_tx_desc_init(struct fxgmac_pdata* pdata)
     	ring->dirty = 0;
     	memset(&ring->tx, 0, sizeof(ring->tx));
 
-    	hw_ops->tx_desc_init(channel);
+        fxgmac_tx_desc_init_channel(channel);
     }
 #endif	
+}
+
+static void fxgmac_rx_desc_reset(struct fxgmac_pdata* pdata,
+    struct fxgmac_desc_data* desc_data,
+    unsigned int index)
+{
+#ifdef LINUX
+    struct fxgmac_dma_desc* dma_desc = desc_data->dma_desc;
+
+    /* Reset the Rx descriptor
+     *   Set buffer 1 (lo) address to header dma address (lo)
+     *   Set buffer 1 (hi) address to header dma address (hi)
+     *   Set buffer 2 (lo) address to buffer dma address (lo)
+     *   Set buffer 2 (hi) address to buffer dma address (hi) and
+     *     set control bits OWN and INTE
+     */
+     //hdr_dma = desc_data->rx.hdr.dma_base + desc_data->rx.hdr.dma_off;
+     //buf_dma = desc_data->rx.buf.dma_base + desc_data->rx.buf.dma_off;
+    dma_desc->desc0 = cpu_to_le32(lower_32_bits(desc_data->rx.buf.dma_base));
+    dma_desc->desc1 = cpu_to_le32(upper_32_bits(desc_data->rx.buf.dma_base));
+    dma_desc->desc2 = 0;//cpu_to_le32(lower_32_bits(buf_dma));
+    dma_desc->desc3 = 0;//cpu_to_le32(upper_32_bits(buf_dma));
+    dma_desc->desc3 = FXGMAC_SET_REG_BITS_LE(
+        dma_desc->desc3,
+        RX_NORMAL_DESC3_INTE_POS,
+        RX_NORMAL_DESC3_INTE_LEN,
+        1);
+    dma_desc->desc3 = FXGMAC_SET_REG_BITS_LE(
+        dma_desc->desc3,
+        RX_NORMAL_DESC3_BUF2V_POS,
+        RX_NORMAL_DESC3_BUF2V_LEN,
+        0);
+    dma_desc->desc3 = FXGMAC_SET_REG_BITS_LE(
+        dma_desc->desc3,
+        RX_NORMAL_DESC3_BUF1V_POS,
+        RX_NORMAL_DESC3_BUF1V_LEN,
+        1);
+
+    /* Since the Rx DMA engine is likely running, make sure everything
+     * is written to the descriptor(s) before setting the OWN bit
+     * for the descriptor
+     */
+    dma_wmb();
+
+    dma_desc->desc3 = FXGMAC_SET_REG_BITS_LE(
+        dma_desc->desc3,
+        RX_NORMAL_DESC3_OWN_POS,
+        RX_NORMAL_DESC3_OWN_LEN,
+        1);
+
+    /* Make sure ownership is written to the descriptor */
+    dma_wmb();
+#else
+    pdata = pdata;
+    desc_data = desc_data;
+    index = index;
+#endif
+}
+
+static void fxgmac_rx_desc_init_channel(struct fxgmac_channel* channel)
+{
+    struct fxgmac_pdata* pdata = channel->pdata;
+    struct fxgmac_ring* ring = channel->rx_ring;
+#ifdef LINUX	
+    unsigned int start_index = ring->cur;
+#endif	
+    struct fxgmac_desc_data* desc_data;
+    unsigned int i;
+#if defined(UEFI)
+    UINT64   HwRbdPa;
+#elif defined(KDNET)
+    PHYSICAL_ADDRESS HwRbdPa;
+#elif defined(_WIN64) || defined(_WIN32)
+    unsigned int Qid;
+    NDIS_PHYSICAL_ADDRESS   HwRbdPa;
+#elif defined(PXE)
+#endif
+
+
+    /* Initialize all descriptors */
+    for (i = 0; i < ring->dma_desc_count; i++) {
+        desc_data = FXGMAC_GET_DESC_DATA(ring, i);
+
+        /* Initialize Rx descriptor */
+        fxgmac_rx_desc_reset(pdata, desc_data, i);
+    }
+
+#if defined(LINUX)
+    /* Update the total number of Rx descriptors */
+    writereg(pdata->pAdapter, ring->dma_desc_count - 1, FXGMAC_DMA_REG(channel, DMA_CH_RDRLR));
+
+    /* Update the starting address of descriptor ring */
+    desc_data = FXGMAC_GET_DESC_DATA(ring, start_index);
+    writereg(pdata->pAdapter, upper_32_bits(desc_data->dma_desc_addr),
+        FXGMAC_DMA_REG(channel, DMA_CH_RDLR_HI));
+    writereg(pdata->pAdapter, lower_32_bits(desc_data->dma_desc_addr),
+        FXGMAC_DMA_REG(channel, DMA_CH_RDLR_LO));
+
+    /* Update the Rx Descriptor Tail Pointer */
+    desc_data = FXGMAC_GET_DESC_DATA(ring, start_index +
+        ring->dma_desc_count - 1);
+    writereg(pdata->pAdapter, lower_32_bits(desc_data->dma_desc_addr),
+        FXGMAC_DMA_REG(channel, DMA_CH_RDTR_LO));
+#elif defined(UEFI)
+    writereg(pdata->pAdapter, pdata->rx_desc_count - 1,
+        FXGMAC_DMA_REG(channel, DMA_CH_RDRLR));
+    /* Update the starting address of descriptor ring */
+    writereg(pdata->pAdapter, GetPhyAddrHigh(((PADAPTER)channel->pdata->pAdapter)->RbdPhyAddr),
+        FXGMAC_DMA_REG(channel, DMA_CH_RDLR_HI));
+    writereg(pdata->pAdapter, GetPhyAddrLow(((PADAPTER)channel->pdata->pAdapter)->RbdPhyAddr),
+        FXGMAC_DMA_REG(channel, DMA_CH_RDLR_LO));
+
+
+    HwRbdPa = ((PADAPTER)channel->pdata->pAdapter)->RbdPhyAddr + (pdata->rx_desc_count - 1) * sizeof(struct fxgmac_dma_desc);
+
+    /* Update the Rx Descriptor Tail Pointer */
+    writereg(pdata->pAdapter, GetPhyAddrLow(HwRbdPa), FXGMAC_DMA_REG(channel, DMA_CH_RDTR_LO));
+#elif defined(PXE)
+#elif defined(UBOOT)
+#elif defined(DPDK)
+#elif defined(KDNET)
+    writereg(channel->pdata->pAdapter, channel->pdata->rx_desc_count - 1,
+        FXGMAC_DMA_REG(channel, DMA_CH_RDRLR));
+
+    /* Update the starting address of descriptor ring */
+    writereg(channel->pdata->pAdapter, upper_32_bits(((PMOTORCOMM_ADAPTER)channel->pdata->pAdapter)->RdbPhyAddr),
+        FXGMAC_DMA_REG(channel, DMA_CH_RDLR_HI));
+    writereg(channel->pdata->pAdapter, lower_32_bits(((PMOTORCOMM_ADAPTER)channel->pdata->pAdapter)->RdbPhyAddr),
+        FXGMAC_DMA_REG(channel, DMA_CH_RDLR_LO));
+
+    HwRbdPa.QuadPart = ((PMOTORCOMM_ADAPTER)channel->pdata->pAdapter)->RdbPhyAddr.QuadPart
+        + (channel->pdata->rx_desc_count - 1) * sizeof(HW_RBD);
+
+    writereg(channel->pdata->pAdapter, HwRbdPa.LowPart, FXGMAC_DMA_REG(channel, DMA_CH_RDTR_LO));
+#else //netadaptercx & ndis
+    Qid = (unsigned int)(channel - pdata->channel_head);
+    DbgPrintF(MP_TRACE, ""STR_FORMAT": %d, Qid =%d\n", __FUNCTION__, __LINE__, Qid);
+
+    writereg(channel->pdata->pAdapter, ((PMP_ADAPTER)channel->pdata->pAdapter)->RxQueue[Qid].NumHwRecvBuffers - 1,
+        FXGMAC_DMA_REG(channel, DMA_CH_RDRLR));
+
+    /* Update the starting address of descriptor ring */
+    writereg(channel->pdata->pAdapter, NdisGetPhysicalAddressHigh(((PMP_ADAPTER)channel->pdata->pAdapter)->RxQueue[Qid].HwRbdBasePa),
+        FXGMAC_DMA_REG(channel, DMA_CH_RDLR_HI));
+    writereg(channel->pdata->pAdapter, NdisGetPhysicalAddressLow(((PMP_ADAPTER)channel->pdata->pAdapter)->RxQueue[Qid].HwRbdBasePa),
+        FXGMAC_DMA_REG(channel, DMA_CH_RDLR_LO));
+
+#if NIC_NET_ADAPETERCX
+    /* Update the Rx Descriptor Tail Pointer */
+    writereg(channel->pdata->pAdapter, NdisGetPhysicalAddressLow(((PMP_ADAPTER)channel->pdata->pAdapter)->RxQueue[Qid].HwRbdBasePa),
+        FXGMAC_DMA_REG(channel, DMA_CH_RDTR_LO));
+    HwRbdPa.QuadPart = 0;
+#else
+    HwRbdPa.QuadPart = ((PMP_ADAPTER)channel->pdata->pAdapter)->RxQueue[Qid].HwRbdBasePa.QuadPart
+        + (((PMP_ADAPTER)channel->pdata->pAdapter)->RxQueue[Qid].NumHwRecvBuffers - 1) * sizeof(HW_RBD);
+
+    /* Update the Rx Descriptor Tail Pointer */
+    writereg(channel->pdata->pAdapter, NdisGetPhysicalAddressLow(HwRbdPa), FXGMAC_DMA_REG(channel, DMA_CH_RDTR_LO));
+#endif
+#endif
 }
 
 static void fxgmac_rx_desc_init(struct fxgmac_pdata* pdata)
 {
 #ifndef LINUX	
-    struct fxgmac_hw_ops* hw_ops = &pdata->hw_ops;
     struct fxgmac_channel* channel;
     int Qid = 0;
 
     channel = pdata->channel_head;
     for (Qid = 0; Qid < RSS_Q_COUNT; Qid++)
     {
-        hw_ops->rx_desc_init(channel + Qid);		
+        fxgmac_rx_desc_init_channel(channel + Qid);
     }
 #else
-    struct fxgmac_hw_ops *hw_ops = &pdata->hw_ops;
     struct fxgmac_desc_data *desc_data;
     struct fxgmac_dma_desc *dma_desc;
     struct fxgmac_channel *channel;
@@ -1064,7 +1281,7 @@ static void fxgmac_rx_desc_init(struct fxgmac_pdata* pdata)
     	ring->cur = 0;
     	ring->dirty = 0;
 
-    	hw_ops->rx_desc_init(channel);
+        fxgmac_rx_desc_init_channel(channel);
     }
 #endif	
 }
@@ -1079,11 +1296,7 @@ static int fxgmac_map_tx_skb(struct fxgmac_channel *channel,
     struct fxgmac_desc_data *desc_data;
     unsigned int offset, datalen, len;
     struct fxgmac_pkt_info *pkt_info;
-#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(5,0,0) )
     skb_frag_t *frag;
-#else
-    struct skb_frag_struct *frag;
-#endif
     unsigned int tso, vlan;
     dma_addr_t skb_dma;
     unsigned int i;
@@ -1237,9 +1450,9 @@ err_out:
 void fxgmac_init_desc_ops(struct fxgmac_desc_ops* desc_ops)
 {
 #ifdef UBOOT
-    desc_ops->alloc_channles_and_rings = fxgmac_alloc_channels;
+    desc_ops->alloc_channels_and_rings = fxgmac_alloc_channels;
 #else
-    desc_ops->alloc_channles_and_rings = fxgmac_alloc_channels_and_rings;
+    desc_ops->alloc_channels_and_rings = fxgmac_alloc_channels_and_rings;
 #endif
     desc_ops->free_channels_and_rings = fxgmac_free_channels_and_rings;
 #ifndef LINUX
@@ -1251,4 +1464,10 @@ void fxgmac_init_desc_ops(struct fxgmac_desc_ops* desc_ops)
     desc_ops->unmap_desc_data = fxgmac_unmap_desc_data;
     desc_ops->tx_desc_init = fxgmac_tx_desc_init;
     desc_ops->rx_desc_init = fxgmac_rx_desc_init;
+#ifndef UBOOT
+    desc_ops->tx_desc_init_channel = fxgmac_tx_desc_init_channel;
+    desc_ops->rx_desc_init_channel = fxgmac_rx_desc_init_channel;
+    desc_ops->tx_desc_reset = fxgmac_tx_desc_reset;
+    desc_ops->rx_desc_reset = fxgmac_rx_desc_reset;
+#endif
 }

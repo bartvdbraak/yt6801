@@ -1,12 +1,21 @@
-/*++
-
-Copyright (c) 2021 Motor-comm Corporation. 
-Confidential and Proprietary. All rights reserved.
-
-This is Motor-comm Corporation NIC driver relevant files. Please don't copy, modify,
-distribute without commercial permission.
-
---*/
+// SPDX-License-Identifier: GPL-2.0+
+/* Copyright (c) 2021 Motor-comm Corporation.
+ * Confidential and Proprietary. All rights reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ */
 
 
 #include <linux/timer.h>
@@ -14,6 +23,41 @@ distribute without commercial permission.
 
 #include "fuxi-gmac.h"
 #include "fuxi-gmac-reg.h"
+
+/*
+ * When in forced mode, set the speed, duplex, and auto-negotiation of the PHY
+ * all at once to avoid the problems caused by individual settings
+ * on some machines
+ */
+void fxgmac_phy_force_mode(struct fxgmac_pdata *pdata)
+{
+    struct fxgmac_hw_ops*   hw_ops = &pdata->hw_ops;
+    u32                     regval = 0;
+    unsigned int            high_bit = 0, low_bit = 0;
+
+    switch (pdata->phy_speed)
+    {
+        case SPEED_1000:
+            high_bit = 1, low_bit = 0;
+            break;
+        case SPEED_100:
+            high_bit = 0, low_bit = 1;
+            break;
+        case SPEED_10:
+            high_bit = 0, low_bit = 0;
+            break;
+        default:
+            break;
+    }
+
+    hw_ops->read_ephy_reg(pdata, REG_MII_BMCR, &regval);
+    regval = FXGMAC_SET_REG_BITS(regval, PHY_CR_AUTOENG_POS, PHY_CR_AUTOENG_LEN, pdata->phy_autoeng);
+    regval = FXGMAC_SET_REG_BITS(regval, PHY_CR_SPEED_SEL_H_POS, PHY_CR_SPEED_SEL_H_LEN, high_bit);
+    regval = FXGMAC_SET_REG_BITS(regval, PHY_CR_SPEED_SEL_L_POS, PHY_CR_SPEED_SEL_L_LEN, low_bit);
+    regval = FXGMAC_SET_REG_BITS(regval, PHY_CR_DUPLEX_POS, PHY_CR_DUPLEX_LEN, pdata->phy_duplex);
+    hw_ops->write_ephy_reg(pdata, REG_MII_BMCR, regval);
+
+}
 
 void fxgmac_phy_force_speed(struct fxgmac_pdata *pdata, int speed)
 {
@@ -36,13 +80,10 @@ void fxgmac_phy_force_speed(struct fxgmac_pdata *pdata, int speed)
             break;
     }
 
-    /* disable autoneg */
     hw_ops->read_ephy_reg(pdata, REG_MII_BMCR, &regval);
-    regval = FXGMAC_SET_REG_BITS(regval, PHY_CR_AUTOENG_POS, PHY_CR_AUTOENG_LEN, 0);
     regval = FXGMAC_SET_REG_BITS(regval, PHY_CR_SPEED_SEL_H_POS, PHY_CR_SPEED_SEL_H_LEN, high_bit);
     regval = FXGMAC_SET_REG_BITS(regval, PHY_CR_SPEED_SEL_L_POS, PHY_CR_SPEED_SEL_L_LEN, low_bit);
     hw_ops->write_ephy_reg(pdata, REG_MII_BMCR, regval);
-
 }
 
 void fxgmac_phy_force_duplex(struct fxgmac_pdata *pdata, int duplex)
@@ -52,7 +93,6 @@ void fxgmac_phy_force_duplex(struct fxgmac_pdata *pdata, int duplex)
     hw_ops->read_ephy_reg(pdata, REG_MII_BMCR, &regval);
     regval = FXGMAC_SET_REG_BITS(regval, PHY_CR_DUPLEX_POS, PHY_CR_DUPLEX_LEN, (duplex ? 1 : 0));
     hw_ops->write_ephy_reg(pdata, REG_MII_BMCR, regval);
-
 }
 
 void fxgmac_phy_force_autoneg(struct fxgmac_pdata *pdata, int autoneg)
@@ -63,7 +103,6 @@ void fxgmac_phy_force_autoneg(struct fxgmac_pdata *pdata, int autoneg)
     regval = FXGMAC_SET_REG_BITS(regval, PHY_CR_AUTOENG_POS, PHY_CR_AUTOENG_LEN, (autoneg? 1 : 0));
     hw_ops->write_ephy_reg(pdata, REG_MII_BMCR, regval);
 }
-
 
 /*
  * input: lport

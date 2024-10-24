@@ -1,20 +1,28 @@
-
-/*++
-
-Copyright (c) 2021 Motorcomm Corporation. 
-Confidential and Proprietary. All rights reserved.
-
-This is Motorcomm Corporation NIC driver relevant files. Please don't copy, modify,
-distribute without commercial permission.
-
---*/
+// SPDX-License-Identifier: GPL-2.0+
+/* Copyright (c) 2021 Motor-comm Corporation.
+ * Confidential and Proprietary. All rights reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ */
 
 #include "fuxi-gmac.h"
 #include "fuxi-gmac-reg.h"
 #include "fuxi-efuse.h"
 
-#ifdef UEFI
-#include "nic_sw.h"
+#ifdef FXGMAC_USE_ADAPTER_HANDLE
+#include "fuxi-mp.h"
 #endif
 
 bool fxgmac_read_patch_from_efuse_per_index(struct fxgmac_pdata* pdata, u8 index, u32* offset, u32* value) /* read patch per index. */
@@ -330,14 +338,18 @@ bool fxgmac_read_mac_subsys_from_efuse(struct fxgmac_pdata* pdata, u8* mac_addr,
 
 bool fxgmac_write_mac_subsys_to_efuse(struct fxgmac_pdata* pdata, u8* mac_addr, u32* subsys, u32* revid)
 {
-    u32 machr = 0, maclr = 0,pcie_cfg_ctrl= PCIE_CFG_CTRL_DEFAULT_VAL;
+#ifdef DBG
+    u32 machr = 0, maclr = 0;
+#endif
+    u32 pcie_cfg_ctrl= PCIE_CFG_CTRL_DEFAULT_VAL;
     bool succeed = true;
     if (mac_addr) {
+#ifdef DBG
         machr = readreg(pdata->pAdapter, pdata->base_mem + MACA0HR_FROM_EFUSE);
         maclr = readreg(pdata->pAdapter, pdata->base_mem + MACA0LR_FROM_EFUSE);
         DPRINTK("Current mac address from efuse is %02x-%02x-%02x-%02x-%02x-%02x.\n", 
             (machr >> 8) & 0xFF, machr & 0xFF, (maclr >> 24) & 0xFF, (maclr >> 16) & 0xFF, (maclr >> 8) & 0xFF, maclr & 0xFF);
-
+#endif
         if(!fxgmac_write_patch_to_efuse(pdata, MACA0HR_FROM_EFUSE, (((u32)mac_addr[0]) << 8) | mac_addr[1])){
             succeed = false;
         }
@@ -369,15 +381,18 @@ bool fxgmac_write_mac_subsys_to_efuse(struct fxgmac_pdata* pdata, u8* mac_addr, 
 
 bool fxgmac_write_mac_addr_to_efuse(struct fxgmac_pdata* pdata, u8* mac_addr)
 {
+#ifdef DBG
     u32 machr = 0, maclr = 0;
+#endif
     bool succeed = true;
 
     if (mac_addr) {
+#ifdef DBG
         machr = readreg(pdata->pAdapter, pdata->base_mem + MACA0HR_FROM_EFUSE);
         maclr = readreg(pdata->pAdapter, pdata->base_mem + MACA0LR_FROM_EFUSE);
         DPRINTK("Current mac address from efuse is %02x-%02x-%02x-%02x-%02x-%02x.\n", 
             (machr >> 8) & 0xFF, machr & 0xFF, (maclr >> 24) & 0xFF, (maclr >> 16) & 0xFF, (maclr >> 8) & 0xFF, maclr & 0xFF);
-
+#endif
         if(!fxgmac_write_patch_to_efuse(pdata, MACA0HR_FROM_EFUSE, (((u32)mac_addr[0]) << 8) | mac_addr[1])){
             succeed = false;
         }

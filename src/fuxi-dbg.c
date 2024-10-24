@@ -1,31 +1,31 @@
-/*++
-
-Copyright (c) 2021 Motorcomm Corporation. 
-Confidential and Proprietary. All rights reserved.
-
-This is Motorcomm Corporation NIC driver relevant files. Please don't copy, modify,
-distribute without commercial permission.
-
-
-Module Name:
-    mp_dbg.c
-
-Abstract:
-    This module contains all debug-related code.
-
-Revision History:
-
-Notes:
-
---*/
+// SPDX-License-Identifier: GPL-2.0+
+/* Copyright (c) 2021 Motor-comm Corporation.
+ * Confidential and Proprietary. All rights reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ */
 
 #include "fuxi-gmac.h"
+#include "fuxi-gmac-reg.h"
+
+#ifdef DBG
+u32   MPDebugLevel = MP_LOUD;
+#endif
 
 #if defined(UEFI)
 #include <Library/UefiLib.h>
-
-
-UINT32   MPDebugLevel = MP_LOUD;
 
 void DbgPrintAddress(unsigned char* Address)
 {
@@ -65,6 +65,9 @@ void fxgmac_dump_buffer(unsigned char *skb, unsigned int len, int tx_rx)
     ZDbgPrintF(MP_TRACE, " ************** Data dump end ****************\n");
 }
 
+
+#elif defined(KDNET)
+
 #elif defined(_WIN64) || defined(_WIN32)
 #include "fuxi-gmac-reg.h"
 #include "fuxi-mp.h"
@@ -80,7 +83,7 @@ Constants
 //
 #define DUMP_BytesPerLine 16
 
-ULONG               MPDebugLevel = MP_LOUD;
+//ULONG               MPDebugLevel = MP_LOUD;
 ULONG               MPAllocCount = 0;       // the number of outstanding allocs
 NDIS_SPIN_LOCK      MPMemoryLock;           // spinlock for the debug mem list
 LIST_ENTRY          MPMemoryList;
@@ -501,10 +504,8 @@ DbgPrintAddress(
 #elif defined(LINUX)
 
 #elif defined(UBOOT)
-#ifdef DBG
-u32   MPDebugLevel = MP_LOUD;
-#endif
+
 #else
-	
+
 #endif
 

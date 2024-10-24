@@ -1,13 +1,21 @@
-/*++
-
-Copyright (c) 2021 Motor-comm Corporation. 
-Confidential and Proprietary. All rights reserved.
-
-This is Motor-comm Corporation NIC driver relevant files. Please don't copy, modify,
-distribute without commercial permission.
-
---*/
-
+// SPDX-License-Identifier: GPL-2.0+
+/* Copyright (c) 2021 Motor-comm Corporation.
+ * Confidential and Proprietary. All rights reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ */
 
 
 #include "fuxi-gmac.h"
@@ -446,9 +454,11 @@ long fxgmac_dbg_netdev_ops_ioctl(struct file *file, unsigned int cmd, unsigned l
         case FXGMAC_EFUSE_READ_REGIONABC:
             memcpy(&ex_data, data, sizeof(CMD_DATA));
             ret = hw_ops->read_efuse_data(pdata, ex_data.val0, &ex_data.val1);
-            DPRINTK("FXGMAC_EFUSE_READ_REGIONABC, address = 0x%x, val = 0x%x\n", 
-                ex_data.val0, 
-                ex_data.val1);
+            /*
+             * DPRINTK("FXGMAC_EFUSE_READ_REGIONABC, address = 0x%x, val = 0x%x\n", 
+             *    ex_data.val0, 
+             *    ex_data.val1);
+             */
             if (ret) {
                 memcpy(data, &ex_data, sizeof(CMD_DATA));
                 out_total_size = ioctl_cmd_size + sizeof(CMD_DATA);
@@ -459,17 +469,21 @@ long fxgmac_dbg_netdev_ops_ioctl(struct file *file, unsigned int cmd, unsigned l
 
         case FXGMAC_EFUSE_WRITE_PATCH_REG:
             memcpy(&ex_data, data, sizeof(CMD_DATA));
-            DPRINTK("FXGMAC_EFUSE_WRITE_PATCH_REG, address = 0x%x, val = 0x%x\n", 
-                ex_data.val0, 
-                ex_data.val1);
+            /*
+             * DPRINTK("FXGMAC_EFUSE_WRITE_PATCH_REG, address = 0x%x, val = 0x%x\n", 
+             *    ex_data.val0, 
+             *    ex_data.val1);
+             */
             ret = hw_ops->write_patch_to_efuse(pdata, ex_data.val0, ex_data.val1);
             break;
 
         case FXGMAC_EFUSE_READ_PATCH_REG:
             memcpy(&ex_data, data, sizeof(CMD_DATA));
             ret = hw_ops->read_patch_from_efuse(pdata, ex_data.val0, &ex_data.val1);
-            DPRINTK("FXGMAC_EFUSE_READ_PATCH_REG, address = 0x%x, val = 0x%x\n", 
-                ex_data.val0, ex_data.val1);
+            /*
+             * DPRINTK("FXGMAC_EFUSE_READ_PATCH_REG, address = 0x%x, val = 0x%x\n", 
+             *    ex_data.val0, ex_data.val1);
+             */
             if (ret) {
                 memcpy(data, &ex_data, sizeof(CMD_DATA));
                 out_total_size = ioctl_cmd_size + sizeof(CMD_DATA);
@@ -483,8 +497,10 @@ long fxgmac_dbg_netdev_ops_ioctl(struct file *file, unsigned int cmd, unsigned l
             ret = hw_ops->write_patch_to_efuse_per_index(pdata, ex_data.val0,
                                                             ex_data.val1,
                                                             ex_data.val2);
-            DPRINTK("FXGMAC_EFUSE_WRITE_PATCH_PER_INDEX, index = %d, address = 0x%x, val = 0x%x\n", 
-                        ex_data.val0, ex_data.val1, ex_data.val2);
+            /*
+             * DPRINTK("FXGMAC_EFUSE_WRITE_PATCH_PER_INDEX, index = %d, address = 0x%x, val = 0x%x\n", 
+             *            ex_data.val0, ex_data.val1, ex_data.val2);
+             */
             break;
 
         case FXGMAC_EFUSE_READ_PATCH_PER_INDEX:
@@ -492,8 +508,10 @@ long fxgmac_dbg_netdev_ops_ioctl(struct file *file, unsigned int cmd, unsigned l
             ret = hw_ops->read_patch_from_efuse_per_index(pdata,ex_data.val0,
                                                             &ex_data.val1,
                                                             &ex_data.val2);
-            DPRINTK("FXGMAC_EFUSE_READ_PATCH_PER_INDEX, address = 0x%x, val = 0x%x\n", 
-                ex_data.val1, ex_data.val2);
+            /*
+             * DPRINTK("FXGMAC_EFUSE_READ_PATCH_PER_INDEX, address = 0x%x, val = 0x%x\n", 
+             *    ex_data.val1, ex_data.val2);
+             */
             if (ret) {
                 memcpy(data, &ex_data, sizeof(CMD_DATA));
                 out_total_size = ioctl_cmd_size + sizeof(CMD_DATA);
@@ -559,20 +577,20 @@ long fxgmac_dbg_netdev_ops_ioctl(struct file *file, unsigned int cmd, unsigned l
                                                     NULL);
             break;
 
-        case FXGMAC_GET_GMAC_REG:
+        case FXGMAC_GET_REG:
             memcpy(&ex_data, data, sizeof(CMD_DATA));
             ex_data.val1 = hw_ops->get_gmac_register(pdata,
-                                        (u8*)(pdata->mac_regs + ex_data.val0));
+                                        (u8*)(pdata->base_mem + ex_data.val0));
             memcpy(data, &ex_data, sizeof(CMD_DATA));
             out_total_size = ioctl_cmd_size + sizeof(CMD_DATA);
             if (copy_to_user((void*)arg, (void*)buf, out_total_size))
                 goto err;
             break;
 
-        case FXGMAC_SET_GMAC_REG:
+        case FXGMAC_SET_REG:
             memcpy(&ex_data, data, sizeof(CMD_DATA));
             regval = hw_ops->set_gmac_register(pdata,
-                                        (u8*)(pdata->mac_regs + ex_data.val0),
+                                        (u8*)(pdata->base_mem + ex_data.val0),
                                         ex_data.val1);
             ret = (regval == 0 ? true : false);
             break;
@@ -671,7 +689,7 @@ static struct file_operations fxgmac_dbg_netdev_ops_fops = {
 
 /**
  * fxgmac_dbg_adapter_init - setup the debugfs directory for the adapter
- * @adapter: the adapter that is starting up
+ * @pdata: board private structure
  **/
 void fxgmac_dbg_adapter_init(struct fxgmac_pdata *pdata)
 {
@@ -692,7 +710,7 @@ void fxgmac_dbg_adapter_init(struct fxgmac_pdata *pdata)
 
 /**
  * fxgmac_dbg_adapter_exit - clear out the adapter's debugfs entries
- * @adapter: board private structure
+ * @pdata: board private structure
  **/
 void fxgmac_dbg_adapter_exit(struct fxgmac_pdata *pdata)
 {
@@ -703,6 +721,7 @@ void fxgmac_dbg_adapter_exit(struct fxgmac_pdata *pdata)
 
 /**
  * fxgmac_dbg_init - start up debugfs for the driver
+ * @pdata: board private structure
  **/
 void fxgmac_dbg_init(struct fxgmac_pdata *pdata)
 {
@@ -750,6 +769,7 @@ void fxgmac_dbg_init(struct fxgmac_pdata *pdata)
 
 /**
  * fxgmac_dbg_exit - clean out the driver's debugfs entries
+ * @pdata: board private structure
  **/
 void fxgmac_dbg_exit(struct fxgmac_pdata *pdata)
 {

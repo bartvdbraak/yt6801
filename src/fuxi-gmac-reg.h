@@ -1,12 +1,21 @@
-/*++
-
-Copyright (c) 2021 Motorcomm, Inc.
-Motorcomm Confidential and Proprietary.
-
-This is Motorcomm NIC driver relevant files. Please don't copy, modify,
-distribute without commercial permission.
-
---*/
+/* SPDX-License-Identifier: GPL-2.0+ */
+/* Copyright (c) 2021 Motor-comm Corporation.
+ * Confidential and Proprietary. All rights reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ */
 
 #ifndef __FUXI_GMAC_REG_H__
 #define __FUXI_GMAC_REG_H__
@@ -35,7 +44,7 @@ distribute without commercial permission.
 #define MAC_IER                                 0x00b4
 #define MAC_TX_RX_STA                           0x00b8
 #define MAC_PMT_STA                             0x00c0
-#define MAC_RWK_PAC                             0x00c4 // This is the FIFO address, the pointer will be increased automatically after writting.
+#define MAC_RWK_PAC                             0x00c4 // This is the FIFO address, the pointer will be increased automatically after writing.
 #define MAC_LPI_STA                             0x00d0
 #define MAC_LPI_CONTROL                         0x00d4
 #define MAC_LPI_TIMER                           0x00d8
@@ -411,7 +420,7 @@ distribute without commercial permission.
 //#define MMC_CR_MCT_POS				4
 //#define MMC_CR_MCT_LEN				2
 #define MMC_RIER_ALL_INTERRUPTS_POS		0
-#define MMC_RIER_ALL_INTERRUPTS_LEN		26
+#define MMC_RIER_ALL_INTERRUPTS_LEN		28
 #define MMC_RISR_RXFRAMECOUNT_GB_POS		0
 #define MMC_RISR_RXFRAMECOUNT_GB_LEN		1
 #define MMC_RISR_RXOCTETCOUNT_GB_POS		1
@@ -470,7 +479,7 @@ distribute without commercial permission.
 #define MMC_RISR_RXLPITRANSITION_LEN		1
 
 #define MMC_TIER_ALL_INTERRUPTS_POS		0
-#define MMC_TIER_ALL_INTERRUPTS_LEN		26
+#define MMC_TIER_ALL_INTERRUPTS_LEN		28
 #define MMC_TISR_TXOCTETCOUNT_GB_POS		0
 #define MMC_TISR_TXOCTETCOUNT_GB_LEN		1
 #define MMC_TISR_TXFRAMECOUNT_GB_POS		1
@@ -1023,6 +1032,8 @@ distribute without commercial permission.
 #define PHY_CR_SPEED_SEL_L_LEN          1
 #define PHY_CR_AUTOENG_POS              12
 #define PHY_CR_AUTOENG_LEN              1
+#define PHY_CR_POWER_POS                11
+#define PHY_CR_POWER_LEN                1
 #define PHY_CR_RE_AUTOENG_POS           9
 #define PHY_CR_RE_AUTOENG_LEN           1
 #define PHY_CR_DUPLEX_POS               8
@@ -1046,6 +1057,10 @@ distribute without commercial permission.
 #define PHY_MII_ADVERTISE_10HALF_POS         5
 #define PHY_MII_ADVERTISE_10HALF_LEN         1
 #define REG_MII_LPA           0x05    /* Link partner ability reg    */
+#define PHY_MII_LINK_PARNTNER_10FULL_POS      6
+#define PHY_MII_LINK_PARNTNER_10FULL_LEN      1
+#define PHY_MII_LINK_PARNTNER_10HALF_POS      5
+#define PHY_MII_LINK_PARNTNER_10HALF_LEN      1
 #define REG_MII_EXPANSION     0x06    /* Expansion register          */
 #define REG_MII_NEXT_PAGE     0x07    /* Next page register          */
 #define REG_MII_LPR_NEXT_PAGE 0x08    /* LPR next page register      */
@@ -1101,15 +1116,15 @@ distribute without commercial permission.
 	/* Advertisement control register(0x04) */
 #define FXGMAC_ADVERTISE_SLCT           0x001f  /* Selector bits               */
 #define FXGMAC_ADVERTISE_CSMA           0x0001  /* Only selector supported     */
-#define FXGMAC_ADVERTISE_1000FULL    	0x0004  /* trt fir 1000BASE-T full duplex */
-#define FXGMAC_ADVERTISE_1000HALF    	0x0008  /* try for 1000BASE-T half duplex */
+#define FXGMAC_ADVERTISE_1000FULL       0x0004  /* trt fir 1000BASE-T full duplex */
+#define FXGMAC_ADVERTISE_1000HALF       0x0008  /* try for 1000BASE-T half duplex */
 #define FXGMAC_ADVERTISE_10HALF         0x0020  /* Try for 10mbps half-duplex  */
 #define FXGMAC_ADVERTISE_10FULL         0x0040  /* Try for 10mbps full-duplex  */
 #define FXGMAC_ADVERTISE_100HALF        0x0080  /* Try for 100mbps half-duplex */
 #define FXGMAC_ADVERTISE_100FULL        0x0100  /* Try for 100mbps full-duplex */
 #define FXGMAC_ADVERTISE_100BASE4       0x0200  /* Try for 100mbps 4k packets  */
 #define FXGMAC_ADVERTISE_PAUSE_CAP      0x0400  /* Try for pause               */
-#define FXGMAC_ADVERTISE_PAUSE_ASYM     0x0800  /* Try for asymetric pause     */
+#define FXGMAC_ADVERTISE_PAUSE_ASYM     0x0800  /* Try for asymmetric pause    */
 #define FXGMAC_ADVERTISE_RESV           0x1000  /* Unused...                   */
 #define FXGMAC_ADVERTISE_RFAULT         0x2000  /* Say we can detect faults    */
 #define FXGMAC_ADVERTISE_LPACK          0x4000  /* Ack link partners response  */
@@ -1119,8 +1134,8 @@ distribute without commercial permission.
 #define REG_BIT_ADVERTISE_1000FULL      0x0200  /* Advertise 1000BASE-T full duplex */
 #define REG_BIT_ADVERTISE_1000HALF      0x0100  /* Advertise 1000BASE-T half duplex */
 
-#define REG_BIT_ADVERTISE_1000_CAP		(REG_BIT_ADVERTISE_1000FULL | REG_BIT_ADVERTISE_1000HALF)
-#define REG_BIT_ADVERTISE_100_10_CAP	(FXGMAC_ADVERTISE_100FULL | FXGMAC_ADVERTISE_100HALF | FXGMAC_ADVERTISE_10FULL | FXGMAC_ADVERTISE_10HALF )
+#define REG_BIT_ADVERTISE_1000_CAP      (REG_BIT_ADVERTISE_1000FULL | REG_BIT_ADVERTISE_1000HALF)
+#define REG_BIT_ADVERTISE_100_10_CAP    (FXGMAC_ADVERTISE_100FULL | FXGMAC_ADVERTISE_100HALF | FXGMAC_ADVERTISE_10FULL | FXGMAC_ADVERTISE_10HALF )
 
 #ifndef SPEED_1000M
 #define SPEED_1000M     1000
@@ -1192,9 +1207,10 @@ distribute without commercial permission.
 #define REG_MII_EXT_SLEEP_REG_CLEAN_LOOPBACK             0xe812
 
 #define REG_MII_EXT_ANALOG_CFG2                                           0x51
-#define REG_MII_EXT_ANALOG_CFG2_LED_VALUE                                 0x4a9
+#define REG_MII_EXT_ANALOG_CFG2_VALUE                                     0x4a9
 #define REG_MII_EXT_ANALOG_CFG8                                           0x57
-#define REG_MII_EXT_ANALOG_CFG8_LED_VALUE                                 0x274c
+#define REG_MII_EXT_ANALOG_CFG8_VALUE                                     0x274c
+#define REG_MII_EXT_ANALOG_CFG8_137D1D05_VALUE                            0x264c
 
 #define REG_MII_EXT_COMMON_LED_CFG                                        0xA00B
 #define REG_MII_EXT_COMMON_LED0_CFG                                       0xA00C
@@ -1284,7 +1300,7 @@ distribute without commercial permission.
 #define MGMT_EPHY_CTRL_STA_SPEED_LEN	        2
 #define MGMT_EPHY_CTRL_STA_SPEED_MASK           0x18
 
-#define MGMT_EPHY_CTRL_ERROR_VAULE              0xFFFFFFFF
+#define MGMT_EPHY_CTRL_ERROR_VALUE              0xFFFFFFFF
 
 #define MGMT_PCIE_EP_CTRL                       0x1008
 
@@ -1327,27 +1343,27 @@ distribute without commercial permission.
 #define MGMT_INT_CTRL0_INT_MASK_EX_PMT      0xF7FF
 #define MGMT_INT_CTRL0_INT_MASK_DISABLE     0xF000
 
-#define MGMT_INT_CTRL0_INT_STATUS_POS       0
-#define MGMT_INT_CTRL0_INT_STATUS_LEN       16
-#define MGMT_INT_CTRL0_INT_STATUS_MASK      0xFFFF
-#define MGMT_INT_CTRL0_INT_STATUS_RX        0x0001
-#define MGMT_INT_CTRL0_INT_STATUS_TX        0x0010
-#define MGMT_INI_CTRL0_INT_STATUS_TX_INVERSE 0xFFEF
-#define MGMG_INT_CTRL0_INT_STATUS_PHY_INVERSE 0xFFDF
+#define MGMT_INT_CTRL0_INT_STATUS_POS         0
+#define MGMT_INT_CTRL0_INT_STATUS_LEN         16
+#define MGMT_INT_CTRL0_INT_STATUS_MASK        0xFFFF
+#define MGMT_INT_CTRL0_INT_STATUS_RX          0x0001
+#define MGMT_INT_CTRL0_INT_STATUS_TX          0x0010
+#define MGMT_INT_CTRL0_INT_STATUS_TX_INVERSE  0xFFEF
+#define MGMT_INT_CTRL0_INT_STATUS_PHY_INVERSE 0xFFDF
 #define MGMT_INT_CTRL0_INT_STATUS_PHY         0x0020
 
-#define MGMT_INT_CTRL0_INT_MASK_RXCH_POS    16
-#define MGMT_INT_CTRL0_INT_STATUS_RXCH_POS  0
-#define MGMT_INT_CTRL0_INT_STATUS_RXCH_LEN  4
-#define MGMT_INT_CTRL0_INT_STATUS_RXCH_MASK 0xF
-#define MGMT_INT_CTRL0_INT_STATUS_RXTX_LEN	5
-#define MGMT_INT_CTRL0_INT_STATUS_RXTX_MASK	0x1F
-#define MGMT_INT_CTRL0_INT_STATUS_RXTXPHY_MASK	0x3F
+#define MGMT_INT_CTRL0_INT_MASK_RXCH_POS        16
+#define MGMT_INT_CTRL0_INT_STATUS_RXCH_POS      0
+#define MGMT_INT_CTRL0_INT_STATUS_RXCH_LEN      4
+#define MGMT_INT_CTRL0_INT_STATUS_RXCH_MASK     0xF
+#define MGMT_INT_CTRL0_INT_STATUS_RXTX_LEN      5
+#define MGMT_INT_CTRL0_INT_STATUS_RXTX_MASK     0x1F
+#define MGMT_INT_CTRL0_INT_STATUS_RXTXPHY_MASK  0x3F
 
-#define MGMT_INT_CTRL0_INT_MASK_TXCH_POS	20
-#define MGMT_INT_CTRL0_INT_STATUS_TXCH_POS	4
-#define MGMT_INT_CTRL0_INT_STATUS_TXCH_LEN	1
-#define MGMT_INT_CTRL0_INT_STATUS_TXCH_MASK	0x1
+#define MGMT_INT_CTRL0_INT_MASK_TXCH_POS        20
+#define MGMT_INT_CTRL0_INT_STATUS_TXCH_POS      4
+#define MGMT_INT_CTRL0_INT_STATUS_TXCH_LEN      1
+#define MGMT_INT_CTRL0_INT_STATUS_TXCH_MASK     0x1
 
 
 /* Interrupt Ctrl1 */
@@ -1370,7 +1386,7 @@ distribute without commercial permission.
 Two working mode:
 1. SW trigger
 LTR idle threshold timer set as 0, enable LTR enable will trigger one LTR message
-Note: PCIe cfg enable should set in initilization before enable LTR.
+Note: PCIe cfg enable should set in initialization before enable LTR.
 2. HW auto trigger
 LTR idle threshold timer set as one non-zero value, HW monitor system status, 
 when system idle timer over threshold, HW send out LTR message
@@ -1405,7 +1421,7 @@ system exit idle state, send out one LTR exit message.
 #define  LTR_IDLE_EXIT                          0x1140  /* LTR_CTRL4, LTR latency message, only for System IDLE End. */
 #define  LTR_IDLE_EXIT_POS                      0
 #define  LTR_IDLE_EXIT_LEN                      10
-#define  LTR_IDLE_EXIT_USVAL                    2
+#define  LTR_IDLE_EXIT_USVAL                    171
 #define  LTR_IDLE_EXIT_SCALE_POS                10
 #define  LTR_IDLE_EXIT_SCALE_LEN                5
 #define  LTR_IDLE_EXIT_SCALE                    2
@@ -1872,5 +1888,7 @@ system exit idle state, send out one LTR exit message.
 #define REG_POWER_EIOS                          0x710
 #define POWER_EIOS_POS                          7
 #define POWER_EIOS_LEN                          1
+
+#define TONGFANGID_137D1D05_ADJUST_SI           0x137D1D05
 
 #endif /* __FUXI_GMAC_REG_H__ */
