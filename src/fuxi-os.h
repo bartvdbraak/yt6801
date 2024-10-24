@@ -1,10 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0+ */
-/* Copyright (c) 2021 Motor-comm Corporation.
- * Confidential and Proprietary. All rights reserved.
+/* Copyright (c) 2021 Motor-comm Corporation. All rights reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation, either version 2 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
@@ -18,28 +17,47 @@
  */
 
 
-#ifndef __FUXI_OS_H__
-#define __FUXI_OS_H__
+#ifndef __FXGMAC_OS_H__
+#define __FXGMAC_OS_H__
 
 #include <linux/dma-mapping.h>
+//#include <linux/timecounter.h>
+#include <linux/etherdevice.h>
+#include <linux/inetdevice.h>
+#include <linux/pm_wakeup.h>
 #include <linux/netdevice.h>
 #include <linux/workqueue.h>
-#include <linux/phy.h>
+#include <linux/interrupt.h>
+#include <linux/ethtool.h>
 #include <linux/if_vlan.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/bitrev.h>
+#include <net/addrconf.h>
 #include <linux/bitops.h>
-#include <linux/timecounter.h>
+#include <linux/socket.h>
+#include <linux/skbuff.h>
+#include <linux/if_arp.h>
+#include <linux/fcntl.h>
+#include <linux/types.h>
+#include <linux/sched.h>
+#include <linux/crc32.h>
+#include <linux/dcbnl.h>
+#include <linux/timer.h>
+#include <linux/inet.h>
+#include <linux/init.h>
+#include <linux/mdio.h>
+#include <linux/phy.h>
+#include <linux/udp.h>
+#include <linux/tcp.h>
+#include <linux/clk.h>
+#include <linux/mm.h>
+#include <linux/in.h>
+#include <linux/ip.h>
 
 #ifdef CONFIG_PCI_MSI
 #include <linux/pci.h>
 #endif
-
-#include <linux/pm_wakeup.h>
-#include <linux/mdio.h>
-#include <linux/clk.h>
-#include <linux/bitrev.h>
-#include <linux/crc32.h>
-#include <linux/dcbnl.h>
-#include <linux/inet.h>
 
 #define LINUX
 
@@ -47,6 +65,21 @@
 #include <linux/version.h>
 #else
 #define KERNEL_VERSION(a,b,c) (((a) << 16) + ((b) << 8) + (c))
+#endif
+
+#ifndef RHEL_MAJOR
+
+//must used like : if ( RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(a,b) )
+#ifndef RHEL_RELEASE_VERSION
+#define RHEL_RELEASE_VERSION(a,b)  (((a) << 8) + (b))
+#define RHEL_RELEASE_CODE (0)
+#endif
+
+#include <linux/timecounter.h>
+#else
+#if (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,8))
+#include <linux/timecounter.h>
+#endif
 #endif
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,19,0))
@@ -59,12 +92,14 @@ struct fxgmac_ring;
 struct fxgmac_pdata;
 struct fxgmac_channel;
 
-#define FXGMAC_DRV_VERSION                  "1.0.28"
+#define FXGMAC_DRV_VERSION                  "1.0.29"
 
 #ifdef CONFIG_PCI_MSI
 /* undefined for legacy interrupt mode */
 /* #undef CONFIG_PCI_MSI */
 #endif
+
+#define FXGMAC_INT_MODERATION_ENABLED   1
 
 #define PCIE_LP_ASPM_L0S                    1
 #define PCIE_LP_ASPM_L1                     2
@@ -100,39 +135,39 @@ struct fxgmac_channel;
 
 #define FXGMAC_TEST_MAC_HEAD_LEN        14
 
-#define FUXI_PM_WPI_READ_FEATURE_EN         1
+#define FXGMAC_PM_WPI_READ_FEATURE_ENABLED         1
 
 #define RSS_Q_COUNT                         4
 
-/* #define FXGMAC_TX_INTERRUPT_EN		1 */
-#define FXGMAC_TX_HANG_TIMER_EN             0
+/* #define FXGMAC_TX_INTERRUPT_ENABLED		1 */
+#define FXGMAC_TX_HANG_TIMER_ENABLED             0
 /* 1 to trigger(write reg 0x1000) for sniffer stop */
 #define FXGMAC_TRIGGER_TX_HANG		0
 
 /* driver feature configuration */
-#if FXGMAC_TX_HANG_TIMER_EN
+#if FXGMAC_TX_HANG_TIMER_ENABLED
 /* 0: check hw current desc; 1: check software dirty */
 #define FXGMAC_TX_HANG_CHECH_DIRTY	0
 #endif
 
 #ifdef CONFIG_ARM64
 /*
- * when you want to run this driver on 64bit arm,you should open this,otherwise 
+ * when you want to run this driver on 64bit arm,you should open this,otherwise
  * dma's mask cannot be set successfully.
  */
-#define FUXI_DMA_BIT_MASK       64
+#define FXGMAC_DMA_BIT_MASK       64
 #endif
 
 #ifdef CONFIG_PCI_MSI
 /* should be same as FXGMAC_MAX_DMA_CHANNELS + 1 tx_irq */
 #define FXGMAC_MAX_MSIX_Q_VECTORS	(FXGMAC_MSIX_Q_VECTORS + 1)
-#define FXGMAC_MSIX_CH0RXDIS_EN		0 //set to 1 for ch0 unbalance fix;
+#define FXGMAC_MSIX_CH0RXDIS_ENABLED		0 //set to 1 for ch0 unbalance fix;
 #define FXGMAC_MSIX_INTCTRL_EN      1
 
 #define FXGMAC_PHY_INT_NUM          1
 #define FXGMAC_MSIX_INT_NUMS (FXGMAC_MAX_MSIX_Q_VECTORS + FXGMAC_PHY_INT_NUM)
 #else
-#define FXGMAC_MSIX_CH0RXDIS_EN		0   /* NO modification needed! for non-MSI, set to 0 always */
+#define FXGMAC_MSIX_CH0RXDIS_ENABLED		0   /* NO modification needed! for non-MSI, set to 0 always */
 #define FXGMAC_MSIX_INTCTRL_EN      0
 #endif
 
@@ -174,17 +209,15 @@ struct fxgmac_channel;
 #define FXGMAC_FILTER_MULTIPLE_VLAN_ENABLED 1
 
 /* Linux driver implement MAC HASH Table feature */
-#define FUXI_MAC_HASH_TABLE 1
+#define FXGMAC_MAC_HASH_TABLE 1
 
 /* Linux driver implement write multiple mac addr */
 #define FXGMAC_FILTER_MULTIPLE_MAC_ADDR_ENABLED 1
 
 /* Linux driver disable MISC Interrupt */
-#define FUXI_MISC_INT_HANDLE_FEATURE_EN             1
+#define FXGMAC_MISC_INT_HANDLE_FEATURE_ENABLED             1
 
 #define FXGMAC_ESD_RESTORE_PCIE_CFG
-
-#define FXGMAC_FIX_FT_D2000_PLATFORM_WOL_ISSUE      1
 
 #define FXGMAC_WOL_INTEGRATED_WOL_PARAMETER
 
@@ -204,15 +237,22 @@ struct fxgmac_channel;
 
 #define FXGMAC_USE_DEFAULT_RSS_KEY_TBALE
 
-#define FXGMAC_RX_VLAN_FILTERING  (pdata->netdev->features & NETIF_F_HW_VLAN_CTAG_FILTER)
+#define FXGMAC_RX_VLAN_FILTERING_ENABLED  (pdata->netdev->features & NETIF_F_HW_VLAN_CTAG_FILTER)
 
-#define FXGMAC_NETDEV_PR_MODE ((pdata->netdev->flags & IFF_PROMISC) != 0)
+#define FXGMAC_NETDEV_PR_MODE_ENABLED ((pdata->netdev->flags & IFF_PROMISC) != 0)
+#define FXGMAC_NETDEV_AM_MODE_ENABLED ((pdata->netdev->flags & IFF_ALLMULTI) != 0)
+#define FXGMAC_NETDEV_MU_MODE_ENABLED ((pdata->netdev->flags & IFF_MULTICAST) != 0)
+#define FXGMAC_NETDEV_BD_MODE_ENABLED ((pdata->netdev->flags & IFF_BROADCAST) != 0)
 
-#define FXGMAC_NETDEV_AM_MODE ((pdata->netdev->flags & IFF_ALLMULTI) != 0)
+#define FXGMAC_RX_CHECKSUM_ENABLED (pdata->netdev->features & NETIF_F_RXCSUM)
 
-#define FXGMAC_RX_CHECKSUM (pdata->netdev->features & NETIF_F_RXCSUM)
+#define TEST_MAC_HEAD               14
+#define TEST_TCP_HEAD_LEN_OFFSET    12
+#define TEST_TCP_OFFLOAD_LEN_OFFSET 48
+#define TEST_TCP_FIX_HEAD_LEN       24
+#define TEST_TCP_MSS_OFFSET         56
 
-/* #define HAVE_FXGMAC_DEBUG_FS */
+#define DF_MAX_NIC_NUM      16
 
 #ifndef offsetof
 #define offsetof(TYPE, MEMBER) ((size_t) &(((TYPE*)0)->MEMBER))
@@ -225,6 +265,71 @@ struct fxgmac_channel;
     && (((u8*)(Address))[3] == ((u8)0x00))          \
     && (((u8*)(Address))[4] == ((u8)0x00))          \
     && (((u8*)(Address))[5] == ((u8)0x00)))
+
+/* centos 7 define start */
+#ifndef dma_rmb
+#define dma_rmb()	barrier()
+#endif
+
+#ifndef dma_wmb
+#define dma_wmb()	barrier()
+#endif
+
+#ifndef smp_mb__before_atomic
+#define smp_mb__before_atomic()	barrier()
+#endif
+
+#ifndef smp_mb__after_atomic
+#define smp_mb__after_atomic()	barrier()
+#endif
+
+#ifndef skb_vlan_tag_present
+#define skb_vlan_tag_present(__skb)	((__skb)->vlan_tci & VLAN_TAG_PRESENT)
+#endif
+
+#ifndef skb_vlan_tag_get
+#define skb_vlan_tag_get(__skb)		((__skb)->vlan_tci & ~VLAN_TAG_PRESENT)
+#endif
+
+#ifndef GENMASK
+/* Create a contiguous bitmask starting at bit position @l and ending at
+ * position @h. For example
+ * GENMASK_ULL(39, 21) gives us the 64bit vector 0x000000ffffe00000.
+ */
+#define GENMASK(h, l) \
+	(((~0UL) << (l)) & (~0UL >> (BITS_PER_LONG - 1 - (h))))
+#endif
+
+#ifndef ETH_RSS_HASH_TOP
+#define __ETH_RSS_HASH_BIT(bit)	((u32)1 << (bit))
+#define __ETH_RSS_HASH(name)	__ETH_RSS_HASH_BIT(ETH_RSS_HASH_##name##_BIT)
+
+#define ETH_RSS_HASH_TOP	__ETH_RSS_HASH(TOP)
+#endif
+
+/* centos 7 needs set these definitions to 0
+ * 1. FXGMAC_RSS_FEATURE_ENABLED
+ * 2. FXGMAC_RSS_HASH_KEY_LINUX
+ * 3. FXGMAC_PAUSE_FEATURE_ENABLED
+ *  #undef CONFIG_PCI_MSI
+ */
+#if (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,0)) && (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,8))
+
+#define strscpy		strlcpy
+
+#undef FXGMAC_RSS_FEATURE_ENABLED
+#define FXGMAC_RSS_FEATURE_ENABLED	0
+
+#undef FXGMAC_RSS_HASH_KEY_LINUX
+#define FXGMAC_RSS_HASH_KEY_LINUX	0
+
+#undef FXGMAC_PAUSE_FEATURE_ENABLED
+#define FXGMAC_PAUSE_FEATURE_ENABLED	0
+
+#undef CONFIG_PCI_MSI
+#endif
+
+/* centos 7 define end */
 
  /* read from 8bit register via pci config space */
 #define cfg_r8(_pdata, reg, pdat) pci_read_config_byte((_pdata)->pdev, (reg), (u8 *)(pdat))
@@ -299,6 +404,10 @@ struct fxgmac_channel;
 #define fxgmac_dump_buffer(_skb, _len, _tx_rx)
 #define DumpLine(_p, _cbLine, _fAddress, _ulGroup )
 
+#ifndef __far
+#define __far
+#endif
+
 #ifndef FXGMAC_DEBUG
 /* #define FXGMAC_DEBUG */
 #endif
@@ -308,7 +417,19 @@ struct fxgmac_channel;
 #define FXGMAC_PR(fmt, args...) \
     pr_alert("[%s,%d]:" fmt, __func__, __LINE__, ## args)
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,9,0))
+/*
+ * If you want to continue a line, you NEED to use KERN_CONT.
+ * That has always been true. It hasn't always been enforced, though.
+ * If you do two printk's and the second one doesn't say "I'm a continuation",
+ * the printk logic assumes you're just confused and wanted two lines.
+ */
+#define DPRINTK(fmt, args...) \
+    printk(KERN_CONT fmt, ## args)
+#else
 #define DPRINTK printk
+#endif
+
 #else
 #define FXGMAC_PR(x...)		do { } while (0)
 #define DPRINTK(x...)
@@ -317,12 +438,12 @@ struct fxgmac_channel;
 #define IOC_MAGIC 'M'
 #define IOC_MAXNR (0x80 + 5)
 
-#define FUXI_DFS_IOCTL_DEVICE_INACTIVE   0x10001
-#define FUXI_DFS_IOCTL_DEVICE_RESET      0x10002
-#define FUXI_DFS_IOCTL_DIAG_BEGIN        0x10003
-#define FUXI_DFS_IOCTL_DIAG_END          0x10004
-#define FUXI_DFS_IOCTL_DIAG_TX_PKT       0x10005
-#define FUXI_DFS_IOCTL_DIAG_RX_PKT       0x10006
+#define FXGMAC_DFS_IOCTL_DEVICE_INACTIVE   0x10001
+#define FXGMAC_DFS_IOCTL_DEVICE_RESET      0x10002
+#define FXGMAC_DFS_IOCTL_DIAG_BEGIN        0x10003
+#define FXGMAC_DFS_IOCTL_DIAG_END          0x10004
+#define FXGMAC_DFS_IOCTL_DIAG_TX_PKT       0x10005
+#define FXGMAC_DFS_IOCTL_DIAG_RX_PKT       0x10006
 
 #define FXGMAC_EFUSE_UPDATE_LED_CFG                  0x10007
 #define FXGMAC_EFUSE_WRITE_LED                       0x10008
@@ -343,7 +464,7 @@ struct fxgmac_channel;
 #define FXGMAC_SET_REG                              0x10016
 #define FXGMAC_GET_PHY_REG                          0x10017
 #define FXGMAC_SET_PHY_REG                          0x10018
-#define FXGMAC_EPHYSTATISTICS                       0x10019
+#define FXGMAC_EPHY_STATISTICS                       0x10019
 #define FXGMAC_GET_STATISTICS                       0x1001A
 #define FXGMAC_GET_PCIE_LOCATION                    0x1001B
 
@@ -375,11 +496,18 @@ struct fxgmac_channel;
 #define FXGMAC_NAPI_DISABLE     0x0
 
 #ifndef fallthrough
+
+#ifdef __has_attribute
 #if __has_attribute(__fallthrough__)
 # define fallthrough                    __attribute__((__fallthrough__))
 #else
 # define fallthrough                    do {} while (0)  /* fallthrough */
 #endif
+
+#else
+# define fallthrough                    do {} while (0)  /* fallthrough */
+#endif
+
 #endif
 
 #define PHY_POWER_DOWN  1
@@ -396,6 +524,16 @@ struct fxgmac_channel;
 #define FXGMAC_PCIE_IO_MEM_MASTER_ENABLE 0x7
 #endif
 
+#ifndef BIT
+#define BIT(n) (0x1<<(n))
+#endif
+
+#define UDP_RSS_FLAGS (BIT(MAC_RSSCR_UDP4TE_POS) | \
+		       BIT(MAC_RSSCR_UDP6TE_POS))
+
+#define MF90_SUB_VENTOR_ID  0x17aa
+#define MF90_SUB_DEVICE_ID  0x3509
+
 #pragma pack(1)
 /* it's better to make this struct's size to 128byte. */
 struct pattern_packet{
@@ -403,15 +541,15 @@ struct pattern_packet{
     u8                  ether_saddr[ETH_ALEN];
     u16                 ether_type;
 
-    __be16		        ar_hrd;		/* format of hardware address	*/
-    __be16		        ar_pro;		/* format of protocol 	*/
-    unsigned char       ar_hln;		/* length of hardware address	*/
-    unsigned char       ar_pln;		/* length of protocol address	*/
-    __be16		        ar_op;		/* ARP opcode (command)		*/
-    unsigned char       ar_sha[ETH_ALEN];	/* sender hardware address  */
-    unsigned char       ar_sip[4];		/* sender IP address        */
-    unsigned char       ar_tha[ETH_ALEN];	/* target hardware address  */
-    unsigned char       ar_tip[4];		/* target IP address        */
+    __be16              ar_hrd;                 /* format of hardware address */
+    __be16              ar_pro;                 /* format of protocol  */
+    unsigned char       ar_hln;                 /* length of hardware address */
+    unsigned char       ar_pln;                 /* length of protocol address */
+    __be16              ar_op;                  /* ARP opcode (command)     */
+    unsigned char       ar_sha[ETH_ALEN];       /* sender hardware address  */
+    unsigned char       ar_sip[4];              /* sender IP address        */
+    unsigned char       ar_tha[ETH_ALEN];       /* target hardware address  */
+    unsigned char       ar_tip[4];              /* target IP address        */
 
     u8                  reverse[86];
 };
@@ -461,15 +599,15 @@ typedef struct _fxgmac_test_packet {
 
     fxgmac_test_buf          buf[MAX_PKT_BUF];
     fxgmac_test_buf          sGList[MAX_PKT_BUF];
-    u16                      vlanID;                                                         
-    u16                      mss;                                                            
-    u32                      hash;                                                           
-    u16                      cpuNum;                                                         
+    u16                      vlanID;
+    u16                      mss;
+    u32                      hash;
+    u16                      cpuNum;
     u16                      xsum;               /* rx, ip-payload checksum */
     u16                      csumStart;          /* custom checksum offset to the mac-header */
-    u16                      csumPos;            /* custom checksom position (to the mac_header) */                                          
-    void*                    upLevelReserved[4];                                                         
-    void*                    lowLevelReserved[4];                                                            
+    u16                      csumPos;            /* custom checksom position (to the mac_header) */
+    void*                    upLevelReserved[4];
+    void*                    lowLevelReserved[4];
 } fxgmac_test_packet, *pfxgmac_test_packet;
 
 typedef struct fxgmac_channel_of_platform
@@ -486,11 +624,11 @@ typedef struct fxgmac_channel_of_platform
     struct napi_struct napi_rx;
     struct timer_list tx_timer;
 
-#if FXGMAC_TX_HANG_TIMER_EN
+#if FXGMAC_TX_HANG_TIMER_ENABLED
     unsigned int tx_hang_timer_active;
     struct timer_list tx_hang_timer;
     unsigned int tx_hang_hw_cur;
-#endif    
+#endif
 }FXGMAC_CHANNEL_OF_PLATFORM;
 
 typedef struct per_regisiter_info
@@ -555,6 +693,10 @@ typedef struct fxgmac_pdata_of_platform
     u32                             cfg_device_ctrl2;
     u32                             cfg_msix_capability;
 
+    int                             pre_phy_speed;
+    int                             pre_phy_duplex;
+    int                             pre_phy_autoneg;
+
     struct work_struct              restart_work;
 #ifdef FXGMAC_ESD_CHECK_ENABLED
     struct delayed_work             esd_work;
@@ -568,7 +710,7 @@ typedef struct fxgmac_pdata_of_platform
 #endif
 
     /* power management and wol*/
-    u32                             wol; 
+    u32                             wol;
     unsigned long                   powerstate;
     /*for ns-offload table. 2 entries supported. */
     unsigned int                    ns_offload_tab_idx;
@@ -587,43 +729,34 @@ typedef struct fxgmac_pdata_of_platform
     /* CMD_DATA                        ex_cmd_data; */
     /* PER_REG_INFO                    per_reg_data; */
     struct sk_buff                  *fxgmac_test_skb_array[FXGMAC_MAX_DBG_TEST_PKT];
-#ifdef HAVE_FXGMAC_DEBUG_FS
-    struct dentry                   *dbg_adapter;
-    struct dentry                   *fxgmac_dbg_root;
-    char                            fxgmac_dbg_netdev_ops_buf[FXGMAC_NETDEV_OPS_BUF_LEN];
-#endif
     DEV_STATE                       dev_state;
     struct mutex                    mutex;
+    struct timer_list               phy_poll_tm;
 }FXGMAC_PDATA_OF_PLATFORM;
 
-
-#ifdef HAVE_FXGMAC_DEBUG_FS
-void fxgmac_dbg_adapter_init(struct fxgmac_pdata *pdata);
-void fxgmac_dbg_adapter_exit(struct fxgmac_pdata *pdata);
-void fxgmac_dbg_init(struct fxgmac_pdata *pdata);
-void fxgmac_dbg_exit(struct fxgmac_pdata *pdata);
-#endif /* HAVE_FXGMAC_DEBUG_FS */
-
 void fxgmac_restart_dev(struct fxgmac_pdata *pdata);
-long fxgmac_dbg_netdev_ops_ioctl(struct file *file, unsigned int cmd, 
+long fxgmac_netdev_ops_ioctl(struct file *file, unsigned int cmd,
                                 unsigned long arg);
 
 int  fxgmac_init(struct fxgmac_pdata *pdata, bool save_private_reg);
 /* for phy interface */
-int  fxgmac_ephy_autoneg_ability_get(struct fxgmac_pdata *pdata, 
+int  fxgmac_ephy_autoneg_ability_get(struct fxgmac_pdata *pdata,
                                         unsigned int *cap_mask);
 int  fxgmac_ephy_status_get(struct fxgmac_pdata *pdata, int* speed,
                                 int* duplex, int* ret_link, int *media);
 int  fxgmac_ephy_soft_reset(struct fxgmac_pdata *pdata);
-void fxgmac_phy_force_mode(struct fxgmac_pdata *pdata);
-void fxgmac_phy_force_speed(struct fxgmac_pdata *pdata, int speed);
-void fxgmac_phy_force_duplex(struct fxgmac_pdata *pdata, int duplex);
-void fxgmac_phy_force_autoneg(struct fxgmac_pdata *pdata, int autoneg);
+int fxgmac_phy_force_mode(struct fxgmac_pdata *pdata);
+int fxgmac_phy_force_speed(struct fxgmac_pdata *pdata, int speed);
+int fxgmac_phy_force_duplex(struct fxgmac_pdata *pdata, int duplex);
+int fxgmac_phy_force_autoneg(struct fxgmac_pdata *pdata, int autoneg);
+//void fxgmac_act_phy_link(struct fxgmac_pdata *pdata);
+int  fxgmac_phy_timer_init(struct fxgmac_pdata *pdata);
+void fxgmac_phy_timer_destroy(struct fxgmac_pdata *pdata);
 
 unsigned int    fxgmac_get_netdev_ip4addr(struct fxgmac_pdata *pdata);
-unsigned char * fxgmac_get_netdev_ip6addr(struct fxgmac_pdata *pdata, 
-                                            unsigned char *ipval, 
-                                            unsigned char *ip6addr_solicited, 
+unsigned char * fxgmac_get_netdev_ip6addr(struct fxgmac_pdata *pdata,
+                                            unsigned char *ipval,
+                                            unsigned char *ip6addr_solicited,
                                             unsigned int ifa_flag);
 
 #if FXGMAC_PM_FEATURE_ENABLED
@@ -640,13 +773,13 @@ void fxgmac_free_tx_data(struct fxgmac_pdata *pdata);
 
 void fxgmac_tx_start_xmit(struct fxgmac_channel *channel, struct fxgmac_ring *ring);
 void fxgmac_dev_xmit(struct fxgmac_channel *channel);
-int fxgmac_dev_read(struct fxgmac_channel *channel);
-
 void fxgmac_config_wol(struct fxgmac_pdata *pdata, int en);
 void fxgmac_print_pkt(struct net_device *netdev, struct sk_buff *skb, bool tx_rx);
 
 void fxgmac_lock(struct fxgmac_pdata * pdata);
 void fxgmac_unlock(struct fxgmac_pdata * pdata);
 
-#endif /* __FUXI_OS_H__ */
+void fxgmac_set_phy_link_ksettings(struct fxgmac_pdata *pdata);
+
+#endif /* __FXGMAC_OS_H__ */
 

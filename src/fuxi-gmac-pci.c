@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0+
-/* Copyright (c) 2021 Motor-comm Corporation.
- * Confidential and Proprietary. All rights reserved.
+/* Copyright (c) 2021 Motor-comm Corporation. All rights reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation, either version 2 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
@@ -16,14 +15,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  */
-
-
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/pci.h>
-
-/* for file operation */
-#include <linux/fs.h>
 
 #include "fuxi-gmac.h"
 #include "fuxi-gmac-reg.h"
@@ -89,12 +80,6 @@ static void fxgmac_remove(struct pci_dev *pcidev)
 #endif
 
     DPRINTK("%s has been removed\n", netdev->name);
-
-#ifdef HAVE_FXGMAC_DEBUG_FS
-    fxgmac_dbg_exit(pdata);
-#endif /* HAVE_FXGMAC_DEBUG_FS */
-
-    /* fxgmac_dbg_log_uninit(); */
 }
 
 /* for Power management, 20210628 */
@@ -204,7 +189,7 @@ static int fxgmac_resume(struct pci_dev *pdev)
 {
     struct net_device *netdev = dev_get_drvdata(&pdev->dev);
     struct fxgmac_pdata *pdata = netdev_priv(netdev);
-    u32 err;
+    u32 err = 0;
 
     DPRINTK("fxpm, fxgmac_resume callin\n");
 
@@ -273,5 +258,5 @@ module_pci_driver(fxgmac_pci_driver);
 
 MODULE_DESCRIPTION(FXGMAC_DRV_DESC);
 MODULE_VERSION(FXGMAC_DRV_VERSION);
-MODULE_AUTHOR("Frank <Frank.Sae@motor-comm.com>");
-MODULE_LICENSE("Dual BSD/GPL");
+MODULE_AUTHOR("Motorcomm Electronic Tech. Co., Ltd.");
+MODULE_LICENSE("GPL");

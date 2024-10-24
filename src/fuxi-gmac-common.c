@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0+
-/* Copyright (c) 2021 Motor-comm Corporation.
- * Confidential and Proprietary. All rights reserved.
+/* Copyright (c) 2021 Motor-comm Corporation. All rights reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation, either version 2 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
@@ -17,16 +16,10 @@
  *
  */
 
-
-#include <linux/kernel.h>
-#include <linux/module.h>
-
-#include "fuxi-os.h"
 #include "fuxi-gmac.h"
 #include "fuxi-gmac-reg.h"
 
-
-MODULE_LICENSE("Dual BSD/GPL");
+MODULE_LICENSE("GPL");
 
 static int debug = 16;
 module_param(debug, int, 0644);
@@ -72,7 +65,7 @@ static void fxgmac_default_config(struct fxgmac_pdata *pdata)
     pdata->rss = 0;
 #endif
     // open interrupt moderation default
-    pdata->intr_mod = 1;
+    pdata->intr_mod = FXGMAC_INT_MODERATION_ENABLED;
     pdata->crc_check = 1;
 
     //yzhang, set based on phy status. pdata->phy_speed = SPEED_1000;
@@ -81,6 +74,9 @@ static void fxgmac_default_config(struct fxgmac_pdata *pdata)
     pdata->phy_duplex = DUPLEX_FULL;
     pdata->expansion.phy_link = false;
     pdata->phy_speed = SPEED_1000;
+    pdata->expansion.pre_phy_speed = pdata->phy_speed;
+    pdata->expansion.pre_phy_duplex = pdata->phy_duplex;
+    pdata->expansion.pre_phy_autoneg = pdata->phy_autoeng;
 
     // default to magic
     pdata->expansion.wol = WAKE_MAGIC;
@@ -137,7 +133,7 @@ int fxgmac_init(struct fxgmac_pdata *pdata, bool save_private_reg)
 
     /* Set the DMA mask */
 #ifdef CONFIG_ARM64
-    dma_width = FUXI_DMA_BIT_MASK;
+    dma_width = FXGMAC_DMA_BIT_MASK;
 #else
     dma_width = pdata->hw_feat.dma_width;
 #endif
@@ -220,7 +216,7 @@ int fxgmac_init(struct fxgmac_pdata *pdata, bool save_private_reg)
     hw_ops->get_rss_hash_key(pdata, (u8 *)pdata->rss_key);
 #endif
 
-#if FXGMAC_MSIX_CH0RXDIS_EN
+#if FXGMAC_MSIX_CH0RXDIS_ENABLED
     for (i = 0; i < FXGMAC_RSS_MAX_TABLE_SIZE; i++) {
         pdata->rss_table[i] = FXGMAC_SET_REG_BITS(
             pdata->rss_table[i],
@@ -314,7 +310,11 @@ int fxgmac_init(struct fxgmac_pdata *pdata, bool save_private_reg)
 
     /* Use default watchdog timeout */
     netdev->watchdog_timeo = msecs_to_jiffies(5000);//refer to sunxi-gmac, 5s
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5,19,0))
+    netif_set_tso_max_size(netdev, NIC_MAX_TCP_OFFLOAD_SIZE);
+#else
     netdev->gso_max_size = NIC_MAX_TCP_OFFLOAD_SIZE;
+#endif
 
     /* Tx coalesce parameters initialization */
     pdata->tx_usecs = FXGMAC_INIT_DMA_TX_USECS;
@@ -343,7 +343,7 @@ static void fxgmac_init_interrupt_scheme(struct fxgmac_pdata *pdata)
      */
     vectors = num_online_cpus();
     if(vectors >= FXGMAC_MAX_DMA_CHANNELS) {
-        // 0-3 for rx, 4 for tx, 5 for phy
+        // 0-3 for rx, 4 for tx, 5 for misc
         req_vectors = FXGMAC_MSIX_INT_NUMS;
         pdata->expansion.msix_entries = kcalloc(req_vectors,
                                             sizeof(struct msix_entry),
@@ -356,10 +356,23 @@ static void fxgmac_init_interrupt_scheme(struct fxgmac_pdata *pdata)
             for (i = 0; i < req_vectors; i++)
                 pdata->expansion.msix_entries[i].entry = i;
 
+#ifndef RHEL_MAJOR
             rc = pci_enable_msix_range(pdata->pdev,
-                                        pdata->expansion.msix_entries,
-                                        req_vectors,
-                                        req_vectors);
+                                       pdata->expansion.msix_entries,
+                                       req_vectors,
+                                       req_vectors);
+#else
+#if (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,0)) && (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,8))
+            rc = pci_enable_msix(pdata->pdev,
+                                 pdata->expansion.msix_entries,
+                                 req_vectors);
+#else
+            rc = pci_enable_msix_range(pdata->pdev,
+                                       pdata->expansion.msix_entries,
+                                       req_vectors,
+                                       req_vectors);
+#endif
+#endif
             if (rc < 0) {
                     dev_err(pdata->dev, "enable MSIx failed,%d.\n", rc);
                     req_vectors = 0; //indicate failure
@@ -375,7 +388,7 @@ static void fxgmac_init_interrupt_scheme(struct fxgmac_pdata *pdata)
                                                         FXGMAC_FLAG_INTERRUPT_LEN,
                                                         FXGMAC_FLAG_MSIX_ENABLED);
                 pdata->per_channel_irq = 1;
-                pdata->expansion.misc_irq = 
+                pdata->expansion.misc_irq =
                     pdata->expansion.msix_entries[MSI_ID_PHY_OTHER].vector;
                 return;
             }else if (req_vectors){
@@ -453,7 +466,7 @@ int fxgmac_drv_probe(struct device *dev, struct fxgmac_resources *res)
 
     pdata->mac_regs = res->addr;
     pdata->base_mem = res->addr;
-    pdata->mac_regs = pdata->mac_regs + FUXI_MAC_REGS_OFFSET;
+    pdata->mac_regs = pdata->mac_regs + FXGMAC_MAC_REGS_OFFSET;
 
     ret = fxgmac_init(pdata, true);
     if (ret) {
@@ -473,11 +486,6 @@ int fxgmac_drv_probe(struct device *dev, struct fxgmac_resources *res)
         DPRINTK("fxgamc_drv_prob callout, netdev num_tx_q=%u\n",
                                     netdev->real_num_tx_queues);
 
-#ifdef HAVE_FXGMAC_DEBUG_FS
-    fxgmac_dbg_init(pdata);
-    fxgmac_dbg_adapter_init(pdata);
-#endif /* HAVE_FXGMAC_DEBUG_FS */
-
     return 0;
 
 err_free_netdev:
@@ -493,9 +501,6 @@ int fxgmac_drv_remove(struct device *dev)
     struct fxgmac_pdata * pdata = netdev_priv(netdev);
     struct fxgmac_hw_ops* hw_ops = &pdata->hw_ops;
 
-#ifdef HAVE_FXGMAC_DEBUG_FS
-    fxgmac_dbg_adapter_exit(pdata);
-#endif /*HAVE_FXGMAC_DEBUG_FS */
     hw_ops->led_under_shutdown(pdata);
 
     unregister_netdev(netdev);
@@ -621,7 +626,8 @@ void fxgmac_get_all_hw_features(struct fxgmac_pdata *pdata)
     memset(hw_feat, 0, sizeof(*hw_feat));
 
     hw_feat->version = readl(pdata->mac_regs + MAC_VR);
-    if(netif_msg_drv(pdata)) DPRINTK ("get offset 0x110,ver=%#x\n", readl(pdata->mac_regs + 0x110));
+    if(netif_msg_drv(pdata))
+        DPRINTK ("Mac ver=%#x\n", hw_feat->version);
 
     /* Hardware feature register 0 */
     hw_feat->phyifsel    = FXGMAC_GET_REG_BITS(mac_hfr0,
@@ -703,13 +709,13 @@ void fxgmac_get_all_hw_features(struct fxgmac_pdata *pdata)
                         MAC_HWF1R_RSSEN_POS,
                         MAC_HWF1R_RSSEN_LEN);*/
 #endif
-    hw_feat->tc_cnt	       = 3/*1, yzhang try,0412*/; /* FXGMAC_GET_REG_BITS(mac_hfr1,
+    hw_feat->tc_cnt        = 3/*1, yzhang try,0412*/; /* FXGMAC_GET_REG_BITS(mac_hfr1,
                         MAC_HWF1R_NUMTC_POS,
                         MAC_HWF1R_NUMTC_LEN); */
     hw_feat->avsel         = FXGMAC_GET_REG_BITS(mac_hfr1,
                         MAC_HWF1R_AVSEL_POS,
                         MAC_HWF1R_AVSEL_LEN);
-    hw_feat->ravsel	       = FXGMAC_GET_REG_BITS(mac_hfr1,
+    hw_feat->ravsel          = FXGMAC_GET_REG_BITS(mac_hfr1,
                         MAC_HWF1R_RAVSEL_POS,
                         MAC_HWF1R_RAVSEL_LEN);
     hw_feat->hash_table_size = FXGMAC_GET_REG_BITS(mac_hfr1,

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0+
-/* Copyright (c) 2021 Motor-comm Corporation.
- * Confidential and Proprietary. All rights reserved.
+/* Copyright (c) 2021 Motor-comm Corporation. All rights reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation, either version 2 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
@@ -17,20 +16,48 @@
  *
  */
 
-
-#include <linux/netdevice.h>
-#include <linux/tcp.h>
-#include <linux/interrupt.h>
-#include <linux/inetdevice.h>
-#include <linux/inet.h>
-#include <net/addrconf.h>
-
 #include "fuxi-gmac.h"
 #include "fuxi-gmac-reg.h"
 
 static int fxgmac_one_poll_rx(struct napi_struct *, int);
 static int fxgmac_one_poll_tx(struct napi_struct *, int);
 static int fxgmac_all_poll(struct napi_struct *, int);
+static int fxgmac_dev_read(struct fxgmac_channel *channel);
+
+/* define for centos 7.0 */
+#if (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,0)) && (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,8))
+
+static inline void ____napi_schedule(struct softnet_data *sd,
+                                     struct napi_struct *napi)
+{
+        list_add_tail(&napi->poll_list, &sd->poll_list);
+        //__raise_softirq_irqoff(NET_RX_SOFTIRQ);
+        or_softirq_pending(1UL << NET_RX_SOFTIRQ);
+}
+
+/**
+ * __napi_schedule_irqoff - schedule for receive
+ * @n: entry to schedule
+ *
+ * Variant of __napi_schedule() assuming hard irqs are masked
+ */
+void __napi_schedule_irqoff(struct napi_struct *n)
+{
+        ____napi_schedule(this_cpu_ptr(&softnet_data), n);
+}
+
+/**
+ *      napi_schedule_irqoff - schedule NAPI poll
+ *      @n: napi context
+ *
+ * Variant of napi_schedule(), assuming hard irqs are masked.
+ */
+static inline void napi_schedule_irqoff(struct napi_struct *n)
+{
+        if (napi_schedule_prep(n))
+                __napi_schedule_irqoff(n);
+}
+#endif
 
 void fxgmac_lock(struct fxgmac_pdata *pdata)
 {
@@ -184,7 +211,7 @@ unsigned int fxgmac_get_netdev_ip4addr(struct fxgmac_pdata *pdata)
 
         DPRINTK("%s, netdev %s IPv4 address %pI4, mask: %pI4\n",__FUNCTION__, ifa->ifa_label, &ifa->ifa_address, &ifa->ifa_mask);
     }
-    //	ifa = rcu_dereference(ifa->ifa_next); // more ipv4 addr
+    //  ifa = rcu_dereference(ifa->ifa_next); // more ipv4 addr
     rcu_read_unlock();
 
     return ipval;
@@ -207,7 +234,7 @@ unsigned char * fxgmac_get_netdev_ip6addr(struct fxgmac_pdata *pdata, unsigned c
     }
 
     if(ip6addr_solicited) {
-        addr_ip6_solicited = (struct in6_addr *)ip6addr_solicited;			
+        addr_ip6_solicited = (struct in6_addr *)ip6addr_solicited;
     }
 
     in6_pton("fe80::4808:8ffb:d93e:d753", -1, (u8*)addr_ip6, -1, NULL); //here just hard code for default
@@ -390,7 +417,7 @@ static void fxgmac_prep_tx_pkt(struct fxgmac_pdata *pdata,
 
     pkt_info->tx_packets = 1;
     pkt_info->tx_bytes = skb->len;
-    if(netif_msg_tx_done(pdata)) 
+    if(netif_msg_tx_done(pdata))
         DPRINTK ("fxgmac_prep_tx_pkt callin,pkt desc cnt=%d,skb len=%d, skbheadlen=%d\n", pkt_info->desc_count, skb->len, skb_headlen(skb));
 
     if (fxgmac_is_tso(skb)) {
@@ -452,15 +479,20 @@ static void fxgmac_prep_tx_pkt(struct fxgmac_pdata *pdata,
             len -= min_t(unsigned int, len, FXGMAC_TX_MAX_BUF_SIZE);
         }
     }
-    if(netif_msg_tx_done(pdata)) 
+    if(netif_msg_tx_done(pdata))
         DPRINTK ("fxgmac_prep_tx_pkt callout,pkt desc cnt=%d,skb len=%d, skbheadlen=%d,frags=%d\n", pkt_info->desc_count, skb->len, skb_headlen(skb), skb_shinfo(skb)->nr_frags);
 }
 
 static int fxgmac_calc_rx_buf_size(struct net_device *netdev, unsigned int mtu)
 {
     unsigned int rx_buf_size;
+    unsigned int max_mtu;
 
-    if (mtu > FXGMAC_JUMBO_PACKET_MTU) {
+    /* On the Linux platform, the MTU size does not include the length
+     * of the MAC address and the length of the Type, but FXGMAC_JUMBO_PACKET_MTU include them.
+     */
+    max_mtu = FXGMAC_JUMBO_PACKET_MTU - ETH_HLEN;
+    if (mtu > max_mtu) {
         netdev_alert(netdev, "MTU exceeds maximum supported value\n");
         return -EINVAL;
     }
@@ -520,151 +552,21 @@ static void fxgmac_disable_rx_tx_ints(struct fxgmac_pdata *pdata)
 }
 #endif
 
-static void fxgmac_phy_process(struct fxgmac_pdata *pdata)
-{
-    int cur_link = 0;
-    int regval = 0;
-    int cur_speed = 0;
-    struct fxgmac_hw_ops *hw_ops = &pdata->hw_ops;
-
-    regval = hw_ops->get_ephy_state(pdata);
-
-    // We should make sure that PHY is done with the reset
-    if (regval & MGMT_EPHY_CTRL_STA_EPHY_RESET) {
-        pdata->expansion.phy_link = false;
-        return;
-    }
-
-    cur_link = FXGMAC_GET_REG_BITS(regval, 
-                                MGMT_EPHY_CTRL_STA_EPHY_LINKUP_POS, 
-                                MGMT_EPHY_CTRL_STA_EPHY_LINKUP_LEN);
-    if (pdata->expansion.phy_link != cur_link) {
-        pdata->expansion.phy_link = cur_link;
-        if (pdata->expansion.phy_link) {
-            cur_speed = FXGMAC_GET_REG_BITS(regval, 
-                                MGMT_EPHY_CTRL_STA_SPEED_POS, 
-                                MGMT_EPHY_CTRL_STA_SPEED_LEN);
-            pdata->phy_speed = (cur_speed == 2) ? SPEED_1000 : 
-                                (cur_speed == 1) ? SPEED_100 : SPEED_10;
-            pdata->phy_duplex = FXGMAC_GET_REG_BITS(regval, 
-                                MGMT_EPHY_CTRL_STA_EPHY_DUPLEX_POS, 
-                                MGMT_EPHY_CTRL_STA_EPHY_DUPLEX_LEN);
-            hw_ops->config_mac_speed(pdata);
-
-            hw_ops->enable_rx(pdata);
-            hw_ops->enable_tx(pdata);
-            netif_carrier_on(pdata->netdev);
-            if (netif_running(pdata->netdev))
-            {
-                netif_tx_wake_all_queues(pdata->netdev);
-                dev_info(pdata->dev, "%s now is link up, mac_speed=%d.\n",
-                                                    netdev_name(pdata->netdev),
-                                                    pdata->phy_speed);
-            }
-        }else {
-            netif_carrier_off(pdata->netdev);
-            netif_tx_stop_all_queues(pdata->netdev);
-            pdata->phy_speed = SPEED_UNKNOWN;
-            pdata->phy_duplex = DUPLEX_UNKNOWN;
-            hw_ops->disable_rx(pdata);
-            hw_ops->disable_tx(pdata);
-            dev_info(pdata->dev, "%s now is link down\n", netdev_name(pdata->netdev));
-        }
-    }
-}
-
 static int fxgmac_misc_poll(struct napi_struct *napi, int budget)
 {
-    struct fxgmac_pdata *pdata = container_of(napi, 
-                                            struct fxgmac_pdata, 
+    struct fxgmac_pdata *pdata = container_of(napi,
+                                            struct fxgmac_pdata,
                                             expansion.napi_misc);
     struct fxgmac_hw_ops *hw_ops = &pdata->hw_ops;
 
-    fxgmac_phy_process(pdata);
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0))
     if (napi_complete_done(napi, 0))
         hw_ops->enable_msix_one_interrupt(pdata, MSI_ID_PHY_OTHER);
 #else
     napi_complete(napi);
     hw_ops->enable_msix_one_interrupt(pdata, MSI_ID_PHY_OTHER);
-#endif 
+#endif
     return 0;
-}
-
-static void fxgmac_clear_misc_int_status(struct fxgmac_pdata *pdata)
-{
-    struct fxgmac_hw_ops *hw_ops = &pdata->hw_ops;
-    u32 regval, i, q_count;
-
-    /* clear phy interrupt status */
-    hw_ops->read_ephy_reg(pdata, REG_MII_INT_STATUS, NULL);
-    /* clear other interrupt status of misc interrupt */
-    regval = pdata->hw_ops.get_gmac_register(pdata, pdata->mac_regs + MAC_ISR);
-    if(regval)
-    {
-        if(regval & (1 << 0))
-        {
-            pdata->hw_ops.get_gmac_register(pdata, pdata->mac_regs + MAC_PHYIF_STA);
-        }
-        if((regval & (1 << 1)) || (regval & (1 << 2)) || (regval & (1 << 3)))
-        {
-            pdata->hw_ops.get_gmac_register(pdata, pdata->mac_regs + MAC_AN_SR);
-        }
-        if(regval & (1 << 4))
-        {
-            pdata->hw_ops.get_gmac_register(pdata, pdata->mac_regs + MAC_PMT_STA);
-        }
-        if(regval & (1 << 5))
-        {
-            pdata->hw_ops.get_gmac_register(pdata, pdata->mac_regs + MAC_LPI_STA);
-        }
-        if(regval & (1 << 8))
-        {
-            if(regval & (1 << 9))
-            {
-                hw_ops->rx_mmc_int(pdata);
-                pdata->hw_ops.get_gmac_register(pdata, pdata->mac_regs + MMC_RISR);
-            }
-            if(regval & (1 << 10))
-            {
-                hw_ops->tx_mmc_int(pdata);
-                pdata->hw_ops.get_gmac_register(pdata, pdata->mac_regs + MMC_TISR);
-            }
-            if(regval & (1 << 11))
-            {
-                pdata->hw_ops.get_gmac_register(pdata, pdata->mac_regs + MMC_IPCRXINT);
-            }
-        }
-        if((regval & (1 << 13)) || (regval & (1 << 14)))
-        {
-            pdata->hw_ops.get_gmac_register(pdata, pdata->mac_regs + MAC_TX_RX_STA);
-        }
-
-        if(regval & (1 << 15))
-        {
-            pdata->hw_ops.get_gmac_register(pdata, pdata->mac_regs + MAC_GPIO_SR);
-        }
-    }
-
-    /* MTL_Interrupt_Status, write 1 clear */
-    regval = pdata->hw_ops.get_gmac_register(pdata, pdata->mac_regs + MTL_INT_SR);
-    pdata->hw_ops.set_gmac_register(pdata, pdata->mac_regs + MTL_INT_SR, regval);
-
-    /* MTL_Q(#i)_Interrupt_Control_Status, write 1 clear */
-    q_count = max(pdata->hw_feat.tx_q_cnt, pdata->hw_feat.rx_q_cnt);
-    for (i = 0; i < q_count; i++) {
-        /* Clear all the interrupts which are set */
-        regval = pdata->hw_ops.get_gmac_register(pdata, pdata->mac_regs + MTL_Q_INT_CTL_SR + i * MTL_Q_INC);
-        pdata->hw_ops.set_gmac_register(pdata, pdata->mac_regs + MTL_Q_INT_CTL_SR + i * MTL_Q_INC, regval);
-    }
-
-    /* MTL_ECC_Interrupt_Status, write 1 clear */
-    regval = pdata->hw_ops.get_gmac_register(pdata, pdata->mac_regs + MTL_ECC_INT_SR);
-    pdata->hw_ops.set_gmac_register(pdata, pdata->mac_regs + MTL_ECC_INT_SR, regval);
-
-    /* DMA_ECC_Interrupt_Status, write 1 clear */
-    regval = pdata->hw_ops.get_gmac_register(pdata, pdata->mac_regs + DMA_ECC_INT_SR);
-    pdata->hw_ops.set_gmac_register(pdata, pdata->mac_regs + DMA_ECC_INT_SR, regval);
 }
 
 static irqreturn_t fxgmac_misc_isr(int irq, void *data)
@@ -674,32 +576,28 @@ static irqreturn_t fxgmac_misc_isr(int irq, void *data)
     u32 regval;
 
     regval = readreg(pdata->pAdapter, pdata->base_mem + MGMT_INT_CTRL0);
-    if (!(regval & MGMT_INT_CTRL0_INT_STATUS_PHY))
+    if (!(regval & MGMT_INT_CTRL0_INT_STATUS_MISC))
         return IRQ_HANDLED;
 
     hw_ops->disable_msix_one_interrupt(pdata, MSI_ID_PHY_OTHER);
-    fxgmac_clear_misc_int_status(pdata);
+    hw_ops->clear_misc_int_status(pdata);
 
-    if (napi_schedule_prep(&pdata->expansion.napi_misc)) {
-        __napi_schedule_irqoff(&pdata->expansion.napi_misc);
-    }
+    napi_schedule_irqoff(&pdata->expansion.napi_misc);
 
     return IRQ_HANDLED;
 }
 
 static irqreturn_t fxgmac_isr(int irq, void *data)
 {
-    unsigned int dma_isr, dma_ch_isr, mac_isr;
+    unsigned int dma_ch_isr;
     struct fxgmac_pdata *pdata = data;
     struct fxgmac_channel *channel;
     struct fxgmac_hw_ops *hw_ops = &pdata->hw_ops;
     unsigned int i;
     u32 val;
 
-    dma_isr = readreg(pdata->pAdapter, pdata->mac_regs + DMA_ISR);
-
     val = readreg(pdata->pAdapter, pdata->base_mem + MGMT_INT_CTRL0);
-    if (!(val & MGMT_INT_CTRL0_INT_STATUS_RXTXPHY_MASK))
+    if (!(val & MGMT_INT_CTRL0_INT_STATUS_RXTXMISC_MASK))
         return IRQ_HANDLED;
 
     hw_ops->disable_mgm_interrupt(pdata);
@@ -739,25 +637,8 @@ static irqreturn_t fxgmac_isr(int irq, void *data)
         writel(dma_ch_isr, FXGMAC_DMA_REG(channel, DMA_CH_SR));
     }
 
-    if (FXGMAC_GET_REG_BITS(dma_isr, DMA_ISR_MACIS_POS,
-                DMA_ISR_MACIS_LEN)) {
-        mac_isr = readl(pdata->mac_regs + MAC_ISR);
-
-        if (FXGMAC_GET_REG_BITS(mac_isr, MAC_ISR_MMCTXIS_POS,
-                    MAC_ISR_MMCTXIS_LEN))
-            hw_ops->tx_mmc_int(pdata);
-
-        if (FXGMAC_GET_REG_BITS(mac_isr, MAC_ISR_MMCRXIS_POS,
-                    MAC_ISR_MMCRXIS_LEN))
-            hw_ops->rx_mmc_int(pdata);
-
-        /* Clear all interrupt signals */
-        writel(mac_isr, (pdata->mac_regs + MAC_ISR));
-    }
-
-    if (pdata->expansion.mgm_intctrl_val & MGMT_INT_CTRL0_INT_STATUS_PHY) {
-        fxgmac_clear_misc_int_status(pdata);
-    }
+    if (pdata->expansion.mgm_intctrl_val & MGMT_INT_CTRL0_INT_STATUS_MISC)
+        hw_ops->clear_misc_int_status(pdata);
 
     if (napi_schedule_prep(&pdata->expansion.napi)) {
         pdata->stats.napi_poll_isr++;
@@ -778,69 +659,27 @@ static irqreturn_t fxgmac_dma_isr(int irq, void *data)
     int message_id;
 
     if (irq == channel->expansion.dma_irq_tx) {
-        if (napi_schedule_prep(&channel->expansion.napi_tx)) {
-            message_id = MSI_ID_TXQ0;
-            hw_ops->disable_msix_one_interrupt(pdata, message_id);
-            regval = 0;
-            regval = FXGMAC_SET_REG_BITS(regval, DMA_CH_SR_TI_POS, DMA_CH_SR_TI_LEN, 1);
-            writereg(pdata->pAdapter, regval, FXGMAC_DMA_REG(channel, DMA_CH_SR));
-            __napi_schedule_irqoff(&channel->expansion.napi_tx);
-        }
+        message_id = MSI_ID_TXQ0;
+        hw_ops->disable_msix_one_interrupt(pdata, message_id);
+        regval = 0;
+        regval = FXGMAC_SET_REG_BITS(regval, DMA_CH_SR_TI_POS, DMA_CH_SR_TI_LEN, 1);
+        writereg(pdata->pAdapter, regval, FXGMAC_DMA_REG(channel, DMA_CH_SR));
+        napi_schedule_irqoff(&channel->expansion.napi_tx);
     } else {
-        if (napi_schedule_prep(&channel->expansion.napi_rx)) {
-            message_id = channel->queue_index;
-            hw_ops->disable_msix_one_interrupt(pdata, message_id);
-            regval = 0;
-            regval = FXGMAC_SET_REG_BITS(regval, DMA_CH_SR_RI_POS, DMA_CH_SR_RI_LEN, 1);
-            writereg(pdata->pAdapter, regval, FXGMAC_DMA_REG(channel, DMA_CH_SR));
-            __napi_schedule_irqoff(&channel->expansion.napi_rx);
-        }
+        message_id = channel->queue_index;
+        hw_ops->disable_msix_one_interrupt(pdata, message_id);
+        regval = 0;
+        regval = readreg(pdata->pAdapter, FXGMAC_DMA_REG(channel, DMA_CH_SR));
+        regval = FXGMAC_SET_REG_BITS(regval, DMA_CH_SR_RI_POS, DMA_CH_SR_RI_LEN, 1);
+        writereg(pdata->pAdapter, regval, FXGMAC_DMA_REG(channel, DMA_CH_SR));
+        napi_schedule_irqoff(&channel->expansion.napi_rx);
     }
 
     return IRQ_HANDLED;
 }
 
-#if 0
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0))
-static void fxgmac_tx_timer(struct timer_list *t)
-#else
-static void fxgmac_tx_timer(unsigned long data)
-#endif
-{
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0))
-    struct fxgmac_channel *channel = from_timer(channel, t, tx_timer);
-#else
-    struct fxgmac_channel *channel = (struct fxgmac_channel *)data;
-#endif
 
-    //for msix. since this function is defined for MSIx, it is no need to brace by macro CONFIG_PCI_MSI
-    struct fxgmac_pdata *pdata = channel->pdata;
-    struct fxgmac_hw_ops *hw_ops = &pdata->hw_ops;
-    u32 regval;
-
-    if (pdata->per_channel_irq) {
-        hw_ops->disable_msix_one_interrupt(pdata, MSI_ID_TXQ0);
-        regval = 0;
-        regval = FXGMAC_SET_REG_BITS(regval, DMA_CH_SR_TI_POS, DMA_CH_SR_TI_LEN, 1);
-        writereg(pdata->pAdapter, regval, FXGMAC_DMA_REG(channel, DMA_CH_SR));
-        if (napi_schedule_prep(&channel->expansion.napi_tx)) {
-            pdata->stats.napi_poll_txtimer++;
-            __napi_schedule(&channel->expansion.napi_tx);
-        }
-    } else {
-        fxgmac_disable_rx_tx_ints(pdata);
-        if (napi_schedule_prep(&pdata->expansion.napi)) {
-            pdata->stats.napi_poll_txtimer++;
-            __napi_schedule(&pdata->expansion.napi);
-        }
-    }
-
-    pdata->stats.cnt_alive_txtimer++;
-    channel->tx_timer_active = 0;
-}
-#endif
-
-#if FXGMAC_TX_HANG_TIMER_EN
+#if FXGMAC_TX_HANG_TIMER_ENABLED
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0))
 static void fxgmac_tx_hang_timer_handler(struct timer_list *t)
 #else
@@ -871,7 +710,7 @@ static void fxgmac_tx_hang_timer_handler(unsigned long data)
         /* hw current desc still stucked */
         if(!pdata->tx_hang_restart_queuing) {
             pdata->tx_hang_restart_queuing = 1;
-            DPRINTK("tx_hang_timer_handler: restart scheduled, at desc %u, queuing=%u.\n", channel->expansion.tx_hang_hw_cur, pdata->tx_hang_restart_queuing);	
+            DPRINTK("tx_hang_timer_handler: restart scheduled, at desc %u, queuing=%u.\n", channel->expansion.tx_hang_hw_cur, pdata->tx_hang_restart_queuing);
 
             netif_tx_stop_all_queues(netdev);
 
@@ -923,7 +762,7 @@ static void fxgmac_init_timers(struct fxgmac_pdata *pdata)
 #else
     setup_timer(&channel->tx_timer, fxgmac_tx_timer, (unsigned long)channel);
 #endif
-#if FXGMAC_TX_HANG_TIMER_EN
+#if FXGMAC_TX_HANG_TIMER_ENABLED
     channel->tx_hang_timer_active = 0;
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0))
     timer_setup(&channel->tx_hang_timer, fxgmac_tx_hang_timer_handler, 0);
@@ -946,7 +785,7 @@ static void fxgmac_stop_timers(struct fxgmac_pdata *pdata)
                 break;
 
             del_timer_sync(&channel->tx_timer);
-#if FXGMAC_TX_HANG_TIMER_EN
+#if FXGMAC_TX_HANG_TIMER_ENABLED
             del_timer_sync(&channel->tx_hang_timer);
             channel->tx_hang_timer_active = 0;
 #endif
@@ -977,7 +816,8 @@ static void fxgmac_napi_enable(struct fxgmac_pdata *pdata, unsigned int add)
             if (!FXGMAC_GET_REG_BITS(rx_napi,
                                 i, FXGMAC_FLAG_PER_CHAN_RX_NAPI_FREE_LEN)) {
                 if (add) {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,0))
+#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(5,19,0) ||\
+      RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9,2) )
                     netif_napi_add_weight(pdata->netdev, &channel->expansion.napi_rx,
                                fxgmac_one_poll_rx, NAPI_POLL_WEIGHT);
 #else
@@ -994,7 +834,8 @@ static void fxgmac_napi_enable(struct fxgmac_pdata *pdata, unsigned int add)
             }
 
             if (FXGMAC_IS_CHANNEL_WITH_TX_IRQ(i) && !tx_napi) {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,0))
+#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(5,19,0) ||\
+      RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9,2) )
                 netif_napi_add_weight(pdata->netdev, &channel->expansion.napi_tx,
                            fxgmac_one_poll_tx, NAPI_POLL_WEIGHT);
 #else
@@ -1013,11 +854,12 @@ static void fxgmac_napi_enable(struct fxgmac_pdata *pdata, unsigned int add)
 
         /* for misc */
         if (!misc_napi) {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,0))
+#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(5,19,0) ||\
+      RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9,2) )
             netif_napi_add_weight(pdata->netdev, &pdata->expansion.napi_misc,
                                        fxgmac_misc_poll, NAPI_POLL_WEIGHT);
 #else
-            netif_napi_add(pdata->netdev, &pdata->expansion.napi_misc, 
+            netif_napi_add(pdata->netdev, &pdata->expansion.napi_misc,
                             fxgmac_misc_poll, NAPI_POLL_WEIGHT);
 #endif
             napi_enable(&pdata->expansion.napi_misc);
@@ -1033,7 +875,8 @@ static void fxgmac_napi_enable(struct fxgmac_pdata *pdata, unsigned int add)
                                     FXGMAC_FLAG_LEGACY_NAPI_FREE_LEN);
         if (!i) {
             if (add) {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,0))
+#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(5,19,0) ||\
+      RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9,2) )
                 netif_napi_add_weight(pdata->netdev, &pdata->expansion.napi,
                            fxgmac_all_poll, NAPI_POLL_WEIGHT);
 #else
@@ -1199,7 +1042,7 @@ static int fxgmac_request_irqs(struct fxgmac_pdata *pdata)
                                         FXGMAC_FLAG_TX_IRQ_FREE_LEN,
                                         FXGMAC_IRQ_ENABLE);
 
-            if(netif_msg_drv(pdata)) 
+            if(netif_msg_drv(pdata))
                 DPRINTK("fxgmac_req_irqs, MSIx irq_tx request ok, ch=%d, irq=%d,%s\n",
                                     i, channel->expansion.dma_irq_tx,
                                         channel->expansion.dma_irq_name_tx);
@@ -1259,7 +1102,7 @@ err_irq:
     if (pdata->per_channel_irq) {
         for (i--, channel--; i < pdata->channel_count; i--, channel--) {
             if(FXGMAC_IS_CHANNEL_WITH_TX_IRQ(i) && tx) {
-                pdata->expansion.int_flags= 
+                pdata->expansion.int_flags=
                             FXGMAC_SET_REG_BITS(pdata->expansion.int_flags,
                                         FXGMAC_FLAG_TX_IRQ_FREE_POS,
                                         FXGMAC_FLAG_TX_IRQ_FREE_LEN,
@@ -1268,7 +1111,7 @@ err_irq:
             }
 
             if (FXGMAC_GET_REG_BITS(rx, i, FXGMAC_FLAG_PER_CHAN_RX_IRQ_FREE_LEN)) {
-                pdata->expansion.int_flags= 
+                pdata->expansion.int_flags=
                             FXGMAC_SET_REG_BITS(pdata->expansion.int_flags,
                                     FXGMAC_FLAG_RX_IRQ_FREE_POS + i,
                                     FXGMAC_FLAG_PER_CHAN_RX_IRQ_FREE_LEN,
@@ -1278,7 +1121,7 @@ err_irq:
         }
 
         if (misc) {
-            pdata->expansion.int_flags= 
+            pdata->expansion.int_flags=
                             FXGMAC_SET_REG_BITS(pdata->expansion.int_flags,
                                     FXGMAC_FLAG_MISC_IRQ_FREE_POS,
                                     FXGMAC_FLAG_MISC_IRQ_FREE_LEN,
@@ -1331,7 +1174,7 @@ static void fxgmac_free_irqs(struct fxgmac_pdata *pdata)
     if (channel != NULL) {
         for (i = 0; i < pdata->channel_count; i++, channel++) {
             if(FXGMAC_IS_CHANNEL_WITH_TX_IRQ(i) && tx) {
-                pdata->expansion.int_flags= 
+                pdata->expansion.int_flags=
                                 FXGMAC_SET_REG_BITS(pdata->expansion.int_flags,
                                         FXGMAC_FLAG_TX_IRQ_FREE_POS,
                                         FXGMAC_FLAG_TX_IRQ_FREE_LEN,
@@ -1341,7 +1184,7 @@ static void fxgmac_free_irqs(struct fxgmac_pdata *pdata)
             }
 
             if (FXGMAC_GET_REG_BITS(rx, i, FXGMAC_FLAG_PER_CHAN_RX_IRQ_FREE_LEN)) {
-                pdata->expansion.int_flags= 
+                pdata->expansion.int_flags=
                                 FXGMAC_SET_REG_BITS(pdata->expansion.int_flags,
                                     FXGMAC_FLAG_RX_IRQ_FREE_POS + i,
                                     FXGMAC_FLAG_PER_CHAN_RX_IRQ_FREE_LEN,
@@ -1351,7 +1194,7 @@ static void fxgmac_free_irqs(struct fxgmac_pdata *pdata)
         }
 
         if (misc) {
-            pdata->expansion.int_flags= 
+            pdata->expansion.int_flags=
                                 FXGMAC_SET_REG_BITS(pdata->expansion.int_flags,
                                     FXGMAC_FLAG_MISC_IRQ_FREE_POS,
                                     FXGMAC_FLAG_MISC_IRQ_FREE_LEN,
@@ -1409,7 +1252,7 @@ void fxgmac_free_rx_data(struct fxgmac_pdata *pdata)
 }
 
 /*
- * since kernel does not clear the MSI mask bits and 
+ * since kernel does not clear the MSI mask bits and
  * this function clear MSI mask bits when MSI is enabled.
  */
 static int fxgmac_disable_pci_msi_config(struct pci_dev *pdev)
@@ -1495,9 +1338,9 @@ int fxgmac_start(struct fxgmac_pdata *pdata)
         /*
         * we should disable msi and msix here when we use legacy interrupt,for two reasons:
         * 1. Exit will restore msi and msix config regisiter, that may enable them.
-        * 2. When the driver that uses the msix interrupt by default is compiled 
-        *   into the OS, uninstall the driver through rmmod, and then install the 
-        *   driver that uses the legacy interrupt, at which time the msix enable 
+        * 2. When the driver that uses the msix interrupt by default is compiled
+        *   into the OS, uninstall the driver through rmmod, and then install the
+        *   driver that uses the legacy interrupt, at which time the msix enable
         *   will be turned on again by default after waking up from S4 on some platform.
         *   such as UOS platform.
         */
@@ -1545,26 +1388,33 @@ int fxgmac_start(struct fxgmac_pdata *pdata)
     regval = FXGMAC_SET_REG_BITS(regval, DMA_MR_INTM_POS,
                                      DMA_MR_INTM_LEN, 1);
     regval = FXGMAC_SET_REG_BITS(regval, DMA_MR_QUREAD_POS,
-                                 DMA_MR_QUREAD_LEN, 1); 
+                                 DMA_MR_QUREAD_LEN, 1);
     writel(regval, pdata->mac_regs + DMA_MR);
 
     writel(0xF0000000, (volatile void *)(netdev->base_addr + MGMT_INT_CTRL0));
 
+#if FXGMAC_INT_MODERATION_ENABLED
     hw_ops->set_interrupt_moderation(pdata);
+#endif
 
     if (pdata->per_channel_irq)
         hw_ops->enable_msix_rxtxphyinterrupt(pdata);
 
     fxgmac_enable_rx_tx_ints(pdata);
+
 #ifdef FXGMAC_ESD_CHECK_ENABLED
     fxgmac_schedule_esd_work(pdata);
 #endif
 
+    fxgmac_set_phy_link_ksettings(pdata);
     hw_ops->led_under_active(pdata);
     pdata->expansion.dev_state = FXGMAC_DEV_START;
+
+    fxgmac_phy_timer_init(pdata);
     return 0;
 
 err_napi:
+    fxgmac_phy_timer_destroy(pdata);
     fxgmac_napi_disable(pdata, 1);
     hw_ops->exit(pdata);
     dev_err(pdata->dev, "fxgmac start callout with irq err.\n");
@@ -1613,6 +1463,8 @@ void fxgmac_stop(struct fxgmac_pdata *pdata)
             netdev_tx_reset_queue(txq);
         }
     }
+
+    fxgmac_phy_timer_destroy(pdata);
 }
 
 void fxgmac_restart_dev(struct fxgmac_pdata *pdata)
@@ -1720,7 +1572,7 @@ void fxgmac_net_powerdown(struct fxgmac_pdata *pdata, unsigned int wol)
     hw_ops->pre_power_down(pdata, false);
 
     if(!test_bit(FXGMAC_POWER_STATE_DOWN, &pdata->expansion.powerstate)) {
-        netdev_err(pdata->netdev, 
+        netdev_err(pdata->netdev,
             "fxgmac powerstate is %lu when config power to down.\n", pdata->expansion.powerstate);
     }
 
@@ -1776,7 +1628,7 @@ static int fxgmac_open(struct net_device *netdev)
 
     return 0;
 
-err_channels_and_rings:	
+err_channels_and_rings:
     desc_ops->free_channels_and_rings(pdata);
     DPRINTK("fxgmac_open callout with channel alloc err\n");
 unlock:
@@ -1811,7 +1663,7 @@ static int fxgmac_close(struct net_device *netdev)
     return 0;
 }
 
-#if ((LINUX_VERSION_CODE > KERNEL_VERSION(4,0,0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(5,6,0)))
+#if ((LINUX_VERSION_CODE > KERNEL_VERSION(4,0,0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(5,6,0) || (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,8))))
 static void fxgmac_tx_timeout(struct net_device *netdev)
 #else
 static void fxgmac_tx_timeout(struct net_device *netdev, unsigned int unused)
@@ -1820,7 +1672,7 @@ static void fxgmac_tx_timeout(struct net_device *netdev, unsigned int unused)
     struct fxgmac_pdata *pdata = netdev_priv(netdev);
 
     netdev_warn(netdev, "tx timeout, device restarting\n");
-#if FXGMAC_TX_HANG_TIMER_EN
+#if FXGMAC_TX_HANG_TIMER_ENABLED
     if(!pdata->tx_hang_restart_queuing)
         schedule_work(&pdata->expansion.restart_work);
 #else
@@ -1834,15 +1686,13 @@ static netdev_tx_t fxgmac_xmit(struct sk_buff *skb, struct net_device *netdev)
     struct fxgmac_pkt_info *tx_pkt_info;
     struct fxgmac_desc_ops *desc_ops;
     struct fxgmac_channel *channel;
-    struct fxgmac_hw_ops *hw_ops;
     struct netdev_queue *txq;
     struct fxgmac_ring *ring;
     int ret;
 
     desc_ops = &pdata->desc_ops;
-    hw_ops = &pdata->hw_ops;
 
-    //yzhang disabled 
+    //yzhang disabled
     if(netif_msg_tx_done(pdata)) DPRINTK("xmit callin, skb->len=%d,q=%d\n", skb->len, skb->queue_mapping);
 
     channel = pdata->channel_head + skb->queue_mapping;
@@ -1898,7 +1748,7 @@ static netdev_tx_t fxgmac_xmit(struct sk_buff *skb, struct net_device *netdev)
     return NETDEV_TX_OK;
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,12,0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,12,0) || (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,8)))
 static void fxgmac_get_stats64(struct net_device *netdev,
                     struct rtnl_link_stats64 *s)
 #else
@@ -1933,8 +1783,12 @@ static struct rtnl_link_stats64 * fxgmac_get_stats64(struct net_device *netdev,
     s->tx_errors = pstats->txframecount_gb - pstats->txframecount_g;
     s->tx_dropped = netdev->stats.tx_dropped;
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,12,0))
+#if (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,8))
+    return;
+#elif (LINUX_VERSION_CODE < KERNEL_VERSION(4,12,0))
     return s;
+#else
+    return;
 #endif
 }
 
@@ -1968,7 +1822,7 @@ static int fxgmac_set_mac_address(struct net_device *netdev, void *addr)
  * of this interface. Because it's an external call that isn't
  * initiated by the OS.
  */
-static int fxgmac_ioctl(struct net_device *netdev, 
+static int fxgmac_ioctl(struct net_device *netdev,
             struct ifreq *ifr, int cmd)
 {
     struct file f;
@@ -1983,7 +1837,7 @@ static int fxgmac_ioctl(struct net_device *netdev,
 
     switch (cmd) {
         case FXGMAC_DEV_CMD:
-            ret = fxgmac_dbg_netdev_ops_ioctl(&f, FXGMAC_IOCTL_DFS_COMMAND, (unsigned long)(ifr->ifr_data));
+            ret = fxgmac_netdev_ops_ioctl(&f, FXGMAC_IOCTL_DFS_COMMAND, (unsigned long)(ifr->ifr_data));
             break;
         default:
             ret = -EINVAL;
@@ -1994,7 +1848,7 @@ static int fxgmac_ioctl(struct net_device *netdev,
 }
 
 #if ( LINUX_VERSION_CODE >= KERNEL_VERSION(5,15,0) )
-static int fxgmac_siocdevprivate(struct net_device *dev, 
+static int fxgmac_siocdevprivate(struct net_device *dev,
                                             struct ifreq *ifr,
                                             void __user *data,
                                             int cmd)
@@ -2006,12 +1860,16 @@ static int fxgmac_siocdevprivate(struct net_device *dev,
 static int fxgmac_change_mtu(struct net_device *netdev, int mtu)
 {
     struct fxgmac_pdata *pdata = netdev_priv(netdev);
-    int ret;
+    int ret, max_mtu;
 #ifdef FXGMAC_DEBUG
     int old_mtu = netdev->mtu;
 #endif
 
-    if (mtu > FXGMAC_JUMBO_PACKET_MTU) {
+    /* On the Linux platform, the MTU size does not include the length
+     * of the MAC address and the length of the Type, but FXGMAC_JUMBO_PACKET_MTU include them.
+     */
+    max_mtu = FXGMAC_JUMBO_PACKET_MTU - ETH_HLEN;
+    if (mtu > max_mtu) {
         netdev_alert(netdev, "MTU exceeds maximum supported value\n");
         return -EINVAL;
     }
@@ -2037,6 +1895,8 @@ static int fxgmac_change_mtu(struct net_device *netdev, int mtu)
 
     if (netif_running(netdev))
         fxgmac_start(pdata);
+
+    netdev_update_features(netdev);
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0))
     DPRINTK("fxgmac,set MTU from %d to %d. min, max=(%d,%d)\n",old_mtu, netdev->mtu, netdev->min_mtu, netdev->max_mtu);
@@ -2105,6 +1965,23 @@ static void fxgmac_poll_controller(struct net_device *netdev)
 }
 #endif /* CONFIG_NET_POLL_CONTROLLER */
 
+static netdev_features_t fxgmac_fix_features(struct net_device *netdev,
+                netdev_features_t features)
+{
+    u32 fifo_size;
+    struct fxgmac_pdata* pdata = netdev_priv(netdev);
+    struct fxgmac_hw_ops *hw_ops = &pdata->hw_ops;
+
+    fifo_size = hw_ops->calculate_max_checksum_size(pdata);
+
+    if (netdev->mtu > fifo_size) {
+        features &= ~NETIF_F_IP_CSUM;
+        features &= ~NETIF_F_IPV6_CSUM;
+    }
+
+    return features;
+}
+
 static int fxgmac_set_features(struct net_device *netdev,
                  netdev_features_t features)
 {
@@ -2171,7 +2048,15 @@ static const struct net_device_ops fxgmac_netdev_ops = {
     .ndo_start_xmit         = fxgmac_xmit,
     .ndo_tx_timeout         = fxgmac_tx_timeout,
     .ndo_get_stats64        = fxgmac_get_stats64,
+
+#if(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9,0))
     .ndo_change_mtu         = fxgmac_change_mtu,
+#elif (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,8))
+    .ndo_change_mtu_rh74    = fxgmac_change_mtu,
+#else
+    .ndo_change_mtu         = fxgmac_change_mtu,
+#endif
+
     .ndo_set_mac_address    = fxgmac_set_mac_address,
     .ndo_validate_addr      = eth_validate_addr,
     .ndo_do_ioctl           = fxgmac_ioctl,
@@ -2184,6 +2069,7 @@ static const struct net_device_ops fxgmac_netdev_ops = {
     .ndo_poll_controller    = fxgmac_poll_controller,
 #endif
     .ndo_set_features       = fxgmac_set_features,
+    .ndo_fix_features       = fxgmac_fix_features,
     .ndo_set_rx_mode        = fxgmac_set_rx_mode,
 };
 
@@ -2204,7 +2090,7 @@ static void fxgmac_rx_refresh(struct fxgmac_channel *channel)
 
     while (ring->dirty != ring->cur) {
         desc_data = FXGMAC_GET_DESC_DATA(ring, ring->dirty);
-#if 0
+#if 1
         /* Reset desc_data values */
         desc_ops->unmap_desc_data(pdata, desc_data);
 
@@ -2230,11 +2116,32 @@ static struct sk_buff *fxgmac_create_skb(struct fxgmac_pdata *pdata,
                      struct fxgmac_desc_data *desc_data,
                      unsigned int len)
 {
-#if 0
-    unsigned int copy_len;
     struct sk_buff *skb;
+    unsigned int copy_len;
     u8 *packet;
 
+
+#if (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,0)) && (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,8))
+
+/* just add fot compile
+ * centos 7.0 not support napi_alloc_skb, and porting it is hard
+ */
+#define napi_alloc_skb(a,b)  NULL
+    skb = __netdev_alloc_skb_ip_align(pdata->netdev, len, GFP_ATOMIC);
+    if (!skb) {
+        netdev_err(pdata->netdev, "%s: Rx init fails; skb is NULL\n", __func__);
+        return NULL;
+    }
+
+    dma_sync_single_for_cpu(pdata->dev, desc_data->rx.buf.dma_base, len, DMA_FROM_DEVICE);
+    skb_copy_to_linear_data(skb, desc_data->skb->data, len);
+    skb_put(skb, len);
+    dma_sync_single_for_device(pdata->dev, desc_data->rx.buf.dma_base, len, DMA_FROM_DEVICE);
+
+    return skb;
+#endif
+
+#if 1
     skb = napi_alloc_skb(napi, desc_data->rx.hdr.dma_len);
     if (!skb)
         return NULL;
@@ -2249,11 +2156,11 @@ static struct sk_buff *fxgmac_create_skb(struct fxgmac_pdata *pdata,
 
     packet = page_address(desc_data->rx.hdr.pa.pages) +
          desc_data->rx.hdr.pa.pages_offset;
-    copy_len = (desc_data->rx.hdr_len) ? desc_data->rx.hdr_len : len;
+    copy_len = len;
     copy_len = min(desc_data->rx.hdr.dma_len, copy_len);
     skb_copy_to_linear_data(skb, packet, copy_len);
     skb_put(skb, copy_len);
-
+#if 0
     len -= copy_len;
     if (len) {
         /* Add the remaining data as a frag */
@@ -2269,10 +2176,9 @@ static struct sk_buff *fxgmac_create_skb(struct fxgmac_pdata *pdata,
                 len, desc_data->rx.buf.dma_len);
         desc_data->rx.buf.pa.pages = NULL;
     }
-
-    return skb;
 #endif
-    struct sk_buff *skb;
+    return skb;
+#else
     skb = __netdev_alloc_skb_ip_align(pdata->netdev, len, GFP_ATOMIC);
     if (!skb) {
         netdev_err(pdata->netdev, "%s: Rx init fails; skb is NULL\n", __func__);
@@ -2280,11 +2186,12 @@ static struct sk_buff *fxgmac_create_skb(struct fxgmac_pdata *pdata,
     }
 
     dma_sync_single_for_cpu(pdata->dev, desc_data->rx.buf.dma_base, len, DMA_FROM_DEVICE);
-	skb_copy_to_linear_data(skb, desc_data->skb->data, len);
-	skb_put(skb, len);
+    skb_copy_to_linear_data(skb, desc_data->skb->data, len);
+    skb_put(skb, len);
     dma_sync_single_for_device(pdata->dev, desc_data->rx.buf.dma_base, len, DMA_FROM_DEVICE);
 
     return skb;
+#endif
 }
 
 static int fxgmac_tx_poll(struct fxgmac_channel *channel)
@@ -2304,8 +2211,11 @@ static int fxgmac_tx_poll(struct fxgmac_channel *channel)
     static int fxgmac_restart_need = 0;
     static u32 change_cnt = 0;
     static u32 reg_cur_pre = 0xffffffff;
+    (void) reg_cur_pre;
+    (void) change_cnt;
+    (void) fxgmac_restart_need;
 
-#if FXGMAC_TX_HANG_TIMER_EN
+#if FXGMAC_TX_HANG_TIMER_ENABLED
     static u32 reg_cur = 0;
 #endif
 
@@ -2334,7 +2244,7 @@ static int fxgmac_tx_poll(struct fxgmac_channel *channel)
         if (!hw_ops->tx_complete(dma_desc)) {
 #if FXGMAC_TRIGGER_TX_HANG
             struct net_device *netdev = pdata->netdev;
-            #define FXGMAC_HANG_THRESHOLD 	1
+            #define FXGMAC_HANG_THRESHOLD       1
             //static u32 reg_tail = 0, reg_tail_pre = 0xffffffff;
 
             reg_cur = readl(FXGMAC_DMA_REG(channel, 0x44/* tx desc curr pointer reg */));
@@ -2350,7 +2260,7 @@ static int fxgmac_tx_poll(struct fxgmac_channel *channel)
             {
                 //change_cnt = 0;
 
-                DPRINTK("after complete check, cur=%d, dirty=%d,qIdx=%d, hw desc cur=%#x, pre=%#x\n", ring->cur, ring->dirty, channel->queue_index, 
+                DPRINTK("after complete check, cur=%d, dirty=%d,qIdx=%d, hw desc cur=%#x, pre=%#x\n", ring->cur, ring->dirty, channel->queue_index,
                     reg_cur, reg_cur_pre);
 
                 if((ring->cur > ring->dirty) && ((ring->cur - ring->dirty) > FXGMAC_HANG_THRESHOLD) ) {
@@ -2363,7 +2273,7 @@ static int fxgmac_tx_poll(struct fxgmac_channel *channel)
                         change_cnt = 0;
                     }
                 }else if((ring->cur < ring->dirty) && ((ring->cur + (ring->dma_desc_count - ring->dirty)) > FXGMAC_HANG_THRESHOLD) ) {
-                    DPRINTK("after complete check warning..., too many TBD occupied by HW, 0xdb00, %d.\n", (ring->cur + (ring->dma_desc_count - ring->dirty)));	
+                    DPRINTK("after complete check warning..., too many TBD occupied by HW, 0xdb00, %d.\n", (ring->cur + (ring->dma_desc_count - ring->dirty)));
                     (* ((u32 *)(netdev->base_addr + 0x1000))) = 0xdb00;
 
                     if(!fxgmac_restart_need ) {
@@ -2374,7 +2284,7 @@ static int fxgmac_tx_poll(struct fxgmac_channel *channel)
                 }
             }
 #endif
-#if FXGMAC_TX_HANG_TIMER_EN
+#if FXGMAC_TX_HANG_TIMER_ENABLED
             if((!pdata->tx_hang_restart_queuing) && (!channel->expansion.tx_hang_timer_active)) {
                 reg_cur = ring->dirty;
                 if(reg_cur_pre != reg_cur) {
@@ -2398,7 +2308,7 @@ static int fxgmac_tx_poll(struct fxgmac_channel *channel)
                     }
                 }
             }else if (pdata->tx_hang_restart_queuing) {
-                //if(netif_msg_drv(pdata)) DPRINTK("tx_hang_timer_handler: restart scheduled.\n");	
+                //if(netif_msg_drv(pdata)) DPRINTK("tx_hang_timer_handler: restart scheduled.\n");
             }
 #endif
 
@@ -2456,18 +2366,14 @@ static int fxgmac_rx_poll(struct fxgmac_channel *channel, int budget)
     struct fxgmac_pdata *pdata = channel->pdata;
     struct fxgmac_ring *ring = channel->rx_ring;
     struct net_device *netdev = pdata->netdev;
-    unsigned int len;
+    unsigned int len, max_len;
     unsigned int context_next, context;
     struct fxgmac_desc_data *desc_data;
     struct fxgmac_pkt_info *pkt_info;
     unsigned int incomplete;
-    struct fxgmac_hw_ops *hw_ops;
     struct napi_struct *napi;
     struct sk_buff *skb;
     int packet_count = 0;
-    u32 ipce,iphe;
-
-    hw_ops = &pdata->hw_ops;
 
     /* Nothing to do if there isn't a Rx ring for this channel */
     if (!ring)
@@ -2522,15 +2428,6 @@ static int fxgmac_rx_poll(struct fxgmac_channel *channel, int budget)
 
         if (!context) {
             len = desc_data->rx.len;
-            if (len > pdata->rx_buf_size) {
-                if (net_ratelimit())
-                    netif_err(pdata, rx_err, netdev, 
-                        "len %d larger than size (%d)\n",
-                            len, pdata->rx_buf_size);
-                pdata->netdev->stats.rx_length_errors++;
-                pdata->netdev->stats.rx_dropped++;
-                goto next_packet;
-            }
 
             if (len == 0) {
                 if (net_ratelimit())
@@ -2550,6 +2447,21 @@ static int fxgmac_rx_poll(struct fxgmac_channel *channel, int budget)
                     goto next_packet;
                 }
             }
+
+            max_len = netdev->mtu + ETH_HLEN;
+            if (!(netdev->features & NETIF_F_HW_VLAN_CTAG_RX) &&
+                skb->protocol == htons(ETH_P_8021Q))
+                    max_len += VLAN_HLEN;
+            if (len > max_len) {
+                if (net_ratelimit())
+                    netif_err(pdata, rx_err, netdev,
+                        "len %d larger than max size %d\n",
+                            len, max_len);
+                pdata->netdev->stats.rx_length_errors++;
+                pdata->netdev->stats.rx_dropped++;
+                dev_kfree_skb(skb);
+                goto next_packet;
+            }
         }
 
         if (!skb) {
@@ -2562,19 +2474,7 @@ static int fxgmac_rx_poll(struct fxgmac_channel *channel, int budget)
 
         skb_checksum_none_assert(skb);
         if (netdev->features & NETIF_F_RXCSUM)
-        {
-            ipce = FXGMAC_GET_REG_BITS_LE(desc_data->dma_desc->desc1,
-                                        RX_NORMAL_DESC1_WB_IPCE_POS,
-                                        RX_NORMAL_DESC1_WB_IPCE_LEN);
-            iphe = FXGMAC_GET_REG_BITS_LE(desc_data->dma_desc->desc1,
-                                        RX_NORMAL_DESC1_WB_IPHE_POS,
-                                        RX_NORMAL_DESC1_WB_IPHE_LEN);
-            /* if csum error,let the stack verify checksum errors.otherwise don't verify */
-            if (!ipce && !iphe && FXGMAC_GET_REG_BITS(pkt_info->attributes,
-                                        RX_PACKET_ATTRIBUTES_CSUM_DONE_POS,
-                                        RX_PACKET_ATTRIBUTES_CSUM_DONE_LEN))
-                skb->ip_summed = CHECKSUM_UNNECESSARY;
-        }
+            skb->ip_summed = CHECKSUM_UNNECESSARY;
 
         if (FXGMAC_GET_REG_BITS(pkt_info->attributes,
                     RX_PACKET_ATTRIBUTES_VLAN_CTAG_POS,
@@ -2651,7 +2551,7 @@ static int fxgmac_rx_poll(struct fxgmac_channel *channel, int budget)
 
                 if((pdata->expansion.fxgmac_test_skb_arr_in_index + 1) % FXGMAC_MAX_DBG_TEST_PKT != pdata->expansion.fxgmac_test_skb_arr_out_index){
                     struct sk_buff *tmpskb = skb_copy(skb, GFP_ATOMIC);
-                    skb_push(tmpskb, FXGMAC_TEST_MAC_HEAD_LEN); 
+                    skb_push(tmpskb, FXGMAC_TEST_MAC_HEAD_LEN);
 
                     pdata->expansion.fxgmac_test_skb_array[pdata->expansion.fxgmac_test_skb_arr_in_index] = tmpskb;
                     pdata->expansion.fxgmac_test_skb_arr_in_index = (pdata->expansion.fxgmac_test_skb_arr_in_index + 1) % FXGMAC_MAX_DBG_TEST_PKT;
@@ -2674,7 +2574,7 @@ next_packet:
         pdata->netdev->stats.rx_bytes += len;
     }
 
-    fxgmac_rx_refresh(channel);
+    //fxgmac_rx_refresh(channel);
 
     return packet_count;
 }
@@ -2684,11 +2584,10 @@ static int fxgmac_one_poll_tx(struct napi_struct *napi, int budget)
     struct fxgmac_channel *channel = container_of(napi,
                         struct fxgmac_channel,
                         expansion.napi_tx);
-    int ret = 0;
     struct fxgmac_pdata *pdata = channel->pdata;
     struct fxgmac_hw_ops *hw_ops = &pdata->hw_ops;
 
-    ret = fxgmac_tx_poll(channel);
+    fxgmac_tx_poll(channel);
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0))
     if (napi_complete_done(napi, 0)) {
         hw_ops->enable_msix_one_interrupt(pdata, MSI_ID_TXQ0);
@@ -2716,7 +2615,7 @@ static int fxgmac_one_poll_rx(struct napi_struct *napi, int budget)
         /* if there no interrupt occurred when this interrupt running,struct napi's state is NAPIF_STATE_SCHED,
         * napi_complete_done return true and we can enable irq,it will not cause unbalanced iqr issure.
         * if there more interrupt occurred when this interrupt running,struct napi's state is NAPIF_STATE_SCHED | NAPIF_STATE_MISSED
-        * because napi_schedule_prep will make it. At this time napi_complete_done will return false and 
+        * because napi_schedule_prep will make it. At this time napi_complete_done will return false and
         * schedule poll again because of NAPIF_STATE_MISSED,it will cause unbalanced irq issure.
         */
         if (napi_complete_done(napi, processed)) {
@@ -2756,12 +2655,6 @@ static int fxgmac_all_poll(struct napi_struct *napi, int budget)
             processed += fxgmac_rx_poll(channel, budget);
         }
     } while (false);
-
-    // for phy, we needn't to process any packet,so processed will be 0
-    if (pdata->expansion.mgm_intctrl_val & MGMT_INT_CTRL0_INT_STATUS_PHY) {
-        fxgmac_phy_process(pdata);
-        pdata->expansion.mgm_intctrl_val &= ~MGMT_INT_CTRL0_INT_STATUS_PHY;
-    }
 
     /* If we processed everything, we are done */
     if (processed < budget) {
@@ -2844,7 +2737,7 @@ void fxgmac_dev_xmit(struct fxgmac_channel *channel)
 
     //if(tso && (netif_msg_tx_done(pdata)))
     if((tso_context) && (netif_msg_tx_done(pdata))) {
-        //tso is initialized to start...	
+        //tso is initialized to start...
         DPRINTK("fxgmac_dev_xmit,tso_%s tso=0x%x,pkt_mss=%d,cur_mss=%d\n",(pkt_info->mss)?"start":"stop", tso, pkt_info->mss, ring->tx.cur_mss);
     }
 
@@ -2928,11 +2821,11 @@ void fxgmac_dev_xmit(struct fxgmac_channel *channel)
         desc_data = FXGMAC_GET_DESC_DATA(ring, cur_index);
         dma_desc = desc_data->dma_desc;
     }
-    
+
     /* Update buffer address (for TSO this is the header) */
     dma_desc->desc0 =  cpu_to_le32(lower_32_bits(desc_data->skb_dma));
     dma_desc->desc1 =  cpu_to_le32(upper_32_bits(desc_data->skb_dma));
-    
+
     /* Update the buffer length */
     dma_desc->desc2 = FXGMAC_SET_REG_BITS_LE(
                 dma_desc->desc2,
@@ -3022,7 +2915,7 @@ void fxgmac_dev_xmit(struct fxgmac_channel *channel)
                     TX_NORMAL_DESC3_FL_LEN,
                     pkt_info->length);
     }
-    if(netif_msg_tx_done(pdata)) DPRINTK("dev_xmit before more descs, desc cur=%d, start=%d, desc=%#x,%#x,%#x,%#x\n", 
+    if(netif_msg_tx_done(pdata)) DPRINTK("dev_xmit before more descs, desc cur=%d, start=%d, desc=%#x,%#x,%#x,%#x\n",
         cur_index, start_index, dma_desc->desc0, dma_desc->desc1, dma_desc->desc2, dma_desc->desc3);
 
     if (start_index <= cur_index)
@@ -3085,7 +2978,7 @@ void fxgmac_dev_xmit(struct fxgmac_channel *channel)
     desc_data->tx.packets = pkt_info->tx_packets;
     desc_data->tx.bytes = pkt_info->tx_bytes;
 
-    if(netif_msg_tx_done(pdata)) DPRINTK("dev_xmit last descs, desc cur=%d, desc=%#x,%#x,%#x,%#x\n", 
+    if(netif_msg_tx_done(pdata)) DPRINTK("dev_xmit last descs, desc cur=%d, desc=%#x,%#x,%#x,%#x\n",
         cur_index, dma_desc->desc0, dma_desc->desc1, dma_desc->desc2, dma_desc->desc3);
 
     /* In case the Tx DMA engine is running, make sure everything
@@ -3102,7 +2995,7 @@ void fxgmac_dev_xmit(struct fxgmac_channel *channel)
                 TX_NORMAL_DESC3_OWN_POS,
                 TX_NORMAL_DESC3_OWN_LEN, 1);
 
-    if(netif_msg_tx_done(pdata)) DPRINTK("dev_xmit first descs, start=%d, desc=%#x,%#x,%#x,%#x\n", 
+    if(netif_msg_tx_done(pdata)) DPRINTK("dev_xmit first descs, start=%d, desc=%#x,%#x,%#x,%#x\n",
         start_index, dma_desc->desc0, dma_desc->desc1, dma_desc->desc2, dma_desc->desc3);
 
     if (netif_msg_tx_queued(pdata))
@@ -3173,8 +3066,8 @@ static void fxgmac_get_rx_tstamp(struct fxgmac_pkt_info *pkt_info,
         }
     //}
 }
-	
-int fxgmac_dev_read(struct fxgmac_channel *channel)
+
+static int fxgmac_dev_read(struct fxgmac_channel *channel)
 {
     struct fxgmac_pdata *pdata = channel->pdata;
     struct fxgmac_ring *ring = channel->rx_ring;
@@ -3182,7 +3075,8 @@ int fxgmac_dev_read(struct fxgmac_channel *channel)
     struct fxgmac_desc_data *desc_data;
     struct fxgmac_dma_desc *dma_desc;
     struct fxgmac_pkt_info *pkt_info;
-    unsigned int err, etlt, l34t;
+    u32 ipce, iphe, rxparser;
+    unsigned int err, etlt;
 
     //unsigned int i;
     static unsigned int cnt_incomplete = 0;
@@ -3195,9 +3089,7 @@ int fxgmac_dev_read(struct fxgmac_channel *channel)
     if (FXGMAC_GET_REG_BITS_LE(dma_desc->desc3,
                    RX_NORMAL_DESC3_OWN_POS,
                    RX_NORMAL_DESC3_OWN_LEN))
-    {
         return 1;
-    }
 
     /* Make sure descriptor fields are read after reading the OWN bit */
     dma_rmb();
@@ -3253,7 +3145,6 @@ int fxgmac_dev_read(struct fxgmac_channel *channel)
         if (desc_data->rx.hdr_len)
             pdata->stats.rx_split_header_packets++;
     }
-    l34t = 0;
 
 #if 0 //(FXGMAC_RSS_FEATURE_ENABLED) //20210608
     /* Get the RSS hash */
@@ -3299,11 +3190,11 @@ int fxgmac_dev_read(struct fxgmac_channel *channel)
                 RX_PACKET_ATTRIBUTES_INCOMPLETE_LEN,
                 1);
         cnt_incomplete++;
-        if ((cnt_incomplete < 2) && netif_msg_rx_status(pdata)) 
+        if ((cnt_incomplete < 2) && netif_msg_rx_status(pdata))
             DPRINTK("dev_read NOT last desc,pkt incomplete yet,%u\n", cnt_incomplete);
 
         return 0;
-    } 
+    }
     if ((cnt_incomplete) && netif_msg_rx_status(pdata))
         DPRINTK("dev_read rx back to normal and incomplete cnt=%u\n", cnt_incomplete);
     cnt_incomplete = 0; //when back to normal, reset cnt
@@ -3316,52 +3207,54 @@ int fxgmac_dev_read(struct fxgmac_channel *channel)
             0);
 
     /* Set checksum done indicator as appropriate */
-    if (netdev->features & NETIF_F_RXCSUM)
-        pkt_info->attributes = FXGMAC_SET_REG_BITS(
-                pkt_info->attributes,
-                RX_PACKET_ATTRIBUTES_CSUM_DONE_POS,
-                RX_PACKET_ATTRIBUTES_CSUM_DONE_LEN,
-                1);
+    if (netdev->features & NETIF_F_RXCSUM) {
+        ipce = FXGMAC_GET_REG_BITS_LE(desc_data->dma_desc->desc1,
+                                    RX_NORMAL_DESC1_WB_IPCE_POS,
+                                    RX_NORMAL_DESC1_WB_IPCE_LEN);
+        iphe = FXGMAC_GET_REG_BITS_LE(desc_data->dma_desc->desc1,
+                                    RX_NORMAL_DESC1_WB_IPHE_POS,
+                                    RX_NORMAL_DESC1_WB_IPHE_LEN);
+        if (!ipce && !iphe)
+            pkt_info->attributes = FXGMAC_SET_REG_BITS(
+                    pkt_info->attributes,
+                    RX_PACKET_ATTRIBUTES_CSUM_DONE_POS,
+                    RX_PACKET_ATTRIBUTES_CSUM_DONE_LEN,
+                    1);
+        else
+            return 0;
+    }
 
     /* Check for errors (only valid in last descriptor) */
     err = FXGMAC_GET_REG_BITS_LE(dma_desc->desc3,
                      RX_NORMAL_DESC3_ES_POS,
                      RX_NORMAL_DESC3_ES_LEN);
+    /* b111: Incomplete parsing due to ECC error */
+    rxparser = FXGMAC_GET_REG_BITS_LE(desc_data->dma_desc->desc2,
+                                RX_NORMAL_DESC2_WB_RAPARSER_POS,
+                                RX_NORMAL_DESC2_WB_RAPARSER_LEN);
+    if (err || rxparser == 0x7) {
+        pkt_info->errors = FXGMAC_SET_REG_BITS(pkt_info->errors,
+                                RX_PACKET_ERRORS_FRAME_POS,
+                                RX_PACKET_ERRORS_FRAME_LEN, 1);
+        return 0;
+    }
+
     etlt = FXGMAC_GET_REG_BITS_LE(dma_desc->desc3,
                       RX_NORMAL_DESC3_ETLT_POS,
                       RX_NORMAL_DESC3_ETLT_LEN);
-    //netif_dbg(pdata, rx_status, netdev, "err=%u, etlt=%#x\n", err, etlt);
-    if((err) && netif_msg_rx_status(pdata)) {
-        DPRINTK("dev_read:head_len=%u,pkt_len=%u,err=%u, etlt=%#x,desc2=0x%08x,desc3=0x%08x\n",desc_data->rx.hdr_len, desc_data->rx.len, err, 
-                etlt, dma_desc->desc2, dma_desc->desc3);
-    }
-
-	if (!err || !etlt) {
-		/* No error if err is 0 or etlt is 0 */
-		if ((etlt == 0x4 /*yzhang changed to 0x4, 0x09*/) &&
-		    (netdev->features & NETIF_F_HW_VLAN_CTAG_RX)) {
-			pkt_info->attributes = FXGMAC_SET_REG_BITS(
-				pkt_info->attributes,
-				RX_PACKET_ATTRIBUTES_VLAN_CTAG_POS,
-				RX_PACKET_ATTRIBUTES_VLAN_CTAG_LEN, 1);
-			pkt_info->vlan_ctag =
-				FXGMAC_GET_REG_BITS_LE(dma_desc->desc0,
-						       RX_NORMAL_DESC0_OVT_POS,
-						       RX_NORMAL_DESC0_OVT_LEN);
-			netif_dbg(pdata, rx_status, netdev, "vlan-ctag=%#06x\n",
-				  pkt_info->vlan_ctag);
-		}
-	} else {
-		if (etlt == 0x05 || etlt == 0x06)
-			pkt_info->attributes = FXGMAC_SET_REG_BITS(
-				pkt_info->attributes,
-				RX_PACKET_ATTRIBUTES_CSUM_DONE_POS,
-				RX_PACKET_ATTRIBUTES_CSUM_DONE_LEN, 0);
-		else
-			pkt_info->errors = FXGMAC_SET_REG_BITS(
-				pkt_info->errors, RX_PACKET_ERRORS_FRAME_POS,
-				RX_PACKET_ERRORS_FRAME_LEN, 1);
-	}
+        if ((etlt == 0x4) &&
+            (netdev->features & NETIF_F_HW_VLAN_CTAG_RX)) {
+                pkt_info->attributes = FXGMAC_SET_REG_BITS(
+                        pkt_info->attributes,
+                        RX_PACKET_ATTRIBUTES_VLAN_CTAG_POS,
+                        RX_PACKET_ATTRIBUTES_VLAN_CTAG_LEN, 1);
+                pkt_info->vlan_ctag =
+                        FXGMAC_GET_REG_BITS_LE(dma_desc->desc0,
+                                               RX_NORMAL_DESC0_OVT_POS,
+                                               RX_NORMAL_DESC0_OVT_LEN);
+                netif_dbg(pdata, rx_status, netdev, "vlan-ctag=%#06x\n",
+                          pkt_info->vlan_ctag);
+        }
 
     return 0;
 }

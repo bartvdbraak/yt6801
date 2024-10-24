@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0+
-/* Copyright (c) 2021 Motor-comm Corporation.
- * Confidential and Proprietary. All rights reserved.
+/* Copyright (c) 2021 Motor-comm Corporation. All rights reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation, either version 2 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
@@ -43,19 +42,19 @@ static void fxgmac_unmap_desc_data(struct fxgmac_pdata* pdata,
     	desc_data->skb_dma = 0;
     	desc_data->skb_dma_len = 0;
     }
-
+#if 0
     if (desc_data->rx.buf.dma_base) {
         dma_unmap_single(pdata->dev, desc_data->rx.buf.dma_base,
                     pdata->rx_buf_size, DMA_FROM_DEVICE);
         desc_data->rx.buf.dma_base = 0;
     }
-
+#endif
     if (desc_data->skb) {
         dev_kfree_skb_any(desc_data->skb);
         desc_data->skb = NULL;
     }
 
-#if 0
+#if 1
     if (desc_data->rx.hdr.pa.pages)
     	put_page(desc_data->rx.hdr.pa.pages);
 
@@ -115,7 +114,7 @@ static void fxgmac_free_ring(struct fxgmac_pdata* pdata,
     	ring->desc_data_head = NULL;
     }
 
-#if 0
+#if 1
     if (ring->rx_hdr_pa.pages) {
     	dma_unmap_page(pdata->dev, ring->rx_hdr_pa.pages_dma,
     		ring->rx_hdr_pa.pages_len, DMA_FROM_DEVICE);
@@ -227,7 +226,7 @@ static int fxgmac_alloc_rings(struct fxgmac_pdata* pdata)
                     goto err_init_ring;
                 }
     		}
-            		
+
         netif_dbg(pdata, drv, pdata->netdev, "%s - Rx ring:\n", channel->name);
 
     	ret = fxgmac_init_ring(pdata, channel->rx_ring,
@@ -237,9 +236,17 @@ static int fxgmac_alloc_rings(struct fxgmac_pdata* pdata)
     			"error initializing Rx ring\n");
     		goto err_init_ring;
     	}
-    	if(netif_msg_drv(pdata)) DPRINTK("fxgmac_alloc_ring..ch=%u,tx_desc_cnt=%u,rx_desc_cnt=%u\n",i,pdata->tx_desc_count,pdata->rx_desc_count);
+    	if(netif_msg_drv(pdata)) {
+			DPRINTK("fxgmac_alloc_ring..ch=%u,", i);
+			if (i < pdata->tx_ring_count)
+			    DPRINTK(" tx_desc_cnt=%u,", pdata->tx_desc_count);
+
+			DPRINTK(" rx_desc_cnt=%u.\n", pdata->rx_desc_count);
+		}
     }
-    if(netif_msg_drv(pdata)) DPRINTK("alloc_rings callout ok\n");
+    if(netif_msg_drv(pdata)) {
+		DPRINTK("alloc_rings callout ok ch=%u\n", i);
+	}
 
     return 0;
 
@@ -255,15 +262,15 @@ static void fxgmac_free_channels(struct fxgmac_pdata *pdata)
 {
     if (!pdata->channel_head)
     	return;
-    if(netif_msg_drv(pdata)) DPRINTK("free_channels,tx_ring=%p\n", pdata->channel_head->tx_ring);
+    if(netif_msg_drv(pdata)) DPRINTK("free_channels,tx_ring=%p", pdata->channel_head->tx_ring);
     kfree(pdata->channel_head->tx_ring);
     pdata->channel_head->tx_ring = NULL;
 
-    if(netif_msg_drv(pdata)) DPRINTK("free_channels,rx_ring=%p\n", pdata->channel_head->rx_ring);
+    if(netif_msg_drv(pdata)) DPRINTK(" ,rx_ring=%p", pdata->channel_head->rx_ring);
     kfree(pdata->channel_head->rx_ring);
     pdata->channel_head->rx_ring = NULL;
 
-    if(netif_msg_drv(pdata)) DPRINTK("free_channels,channel=%p\n", pdata->channel_head);
+    if(netif_msg_drv(pdata)) DPRINTK(" ,channel=%p\n", pdata->channel_head);
     kfree(pdata->channel_head);
 
     pdata->channel_head = NULL;
@@ -286,7 +293,7 @@ static void fxgmac_free_channels(struct fxgmac_pdata* pdata)
 
     pdata->channel_head = NULL;
     pdata->channel_count = 0;
-}	
+}
 #endif
 
 #if defined(UEFI)
@@ -390,7 +397,7 @@ static int fxgmac_alloc_channels(struct fxgmac_pdata* pdata)
 
     err:
     return ret;
-}	
+}
 #elif defined(LINUX)
 static int fxgmac_alloc_channels(struct fxgmac_pdata *pdata)
 {
@@ -407,7 +414,7 @@ static int fxgmac_alloc_channels(struct fxgmac_pdata *pdata)
 
     channel_head = kcalloc(pdata->channel_count,
     		       sizeof(struct fxgmac_channel), GFP_KERNEL);
-    if(netif_msg_drv(pdata)) DPRINTK("alloc_channels,channel_head=%p,size=%d*%ld\n", channel_head, pdata->channel_count,sizeof(struct fxgmac_channel));
+    if(netif_msg_drv(pdata)) DPRINTK("alloc_channels,channel_head=%p,size=%d*%d\n", channel_head, pdata->channel_count,(u32)sizeof(struct fxgmac_channel));
 
     if (!channel_head)
     	return ret;
@@ -417,13 +424,13 @@ static int fxgmac_alloc_channels(struct fxgmac_pdata *pdata)
     if (!tx_ring)
     	goto err_tx_ring;
 
-    if(netif_msg_drv(pdata)) DPRINTK("alloc_channels,tx_ring=%p,size=%d*%ld\n", tx_ring, pdata->tx_ring_count,sizeof(struct fxgmac_ring));
+    if(netif_msg_drv(pdata)) DPRINTK("alloc_channels,tx_ring=%p,size=%d*%d\n", tx_ring, pdata->tx_ring_count,(u32)sizeof(struct fxgmac_ring));
     rx_ring = kcalloc(pdata->rx_ring_count, sizeof(struct fxgmac_ring),
     		  GFP_KERNEL);
     if (!rx_ring)
     	goto err_rx_ring;
 
-    if(netif_msg_drv(pdata)) DPRINTK("alloc_channels,rx_ring=%p,size=%d*%ld\n", rx_ring, pdata->rx_ring_count,sizeof(struct fxgmac_ring));
+    if(netif_msg_drv(pdata)) DPRINTK("alloc_channels,rx_ring=%p,size=%d*%d\n", rx_ring, pdata->rx_ring_count,(u32)sizeof(struct fxgmac_ring));
     //DPRINTK("fxgmac_alloc_channels ch_num=%d,rxring=%d,txring=%d\n",pdata->channel_count, pdata->rx_ring_count,pdata->tx_ring_count);
 
     for (i = 0, channel = channel_head; i < pdata->channel_count;
@@ -490,7 +497,7 @@ err_tx_ring:
     DPRINTK("fxgmac alloc_channels callout err,%d\n",ret);
     return ret;
 }
-#elif defined(UBOOT) || defined(KDNET)
+#elif defined(UBOOT) || defined(KDNET) || defined(PXE)
 static int fxgmac_alloc_channels(struct fxgmac_pdata* pdata)
 {
     struct fxgmac_channel* channel;
@@ -684,7 +691,7 @@ err_irq:
     //kfree(channel_head);
 
     return ret;
-}	
+}
 #endif
 
 static void fxgmac_free_channels_and_rings(struct fxgmac_pdata* pdata)
@@ -750,12 +757,12 @@ static int fxgmac_alloc_pages(struct fxgmac_pdata *pdata,
     return 0;
 }
 #endif
-#if !(defined(UEFI) || defined(LINUX) || defined(UBOOT))
+#if !(defined(UEFI) || defined(UBOOT) || defined(PXE))
 static void fxgmac_set_buffer_data(struct fxgmac_buffer_data* bd,
 	struct fxgmac_page_alloc* pa,
 	unsigned int len)
 {
-#ifndef LINUX	
+#ifndef LINUX
     bd = bd;
     pa = pa;
     len = len;
@@ -782,17 +789,54 @@ static void fxgmac_set_buffer_data(struct fxgmac_buffer_data* bd,
 }
 #endif
 
+#ifdef LINUX
+static int fxgmac_alloc_pages(struct fxgmac_pdata *pdata,
+			      struct fxgmac_page_alloc *pa,
+			      gfp_t gfp, int order)
+{
+    struct page *pages = NULL;
+    dma_addr_t pages_dma;
+
+    /* Try to obtain pages, decreasing order if necessary */
+    gfp |= __GFP_COMP | __GFP_NOWARN;
+    while (order >= 0) {
+    	pages = alloc_pages(gfp, order);
+    	if (pages)
+    		break;
+
+    	order--;
+    }
+    if (!pages)
+    	return -ENOMEM;
+
+    /* Map the pages */
+    pages_dma = dma_map_page(pdata->dev, pages, 0,
+    			 PAGE_SIZE << order, DMA_FROM_DEVICE);
+    if (dma_mapping_error(pdata->dev, pages_dma)) {
+    	put_page(pages);
+    	return -ENOMEM;
+    }
+
+    pa->pages = pages;
+    pa->pages_len = PAGE_SIZE << order;
+    pa->pages_offset = 0;
+    pa->pages_dma = pages_dma;
+
+    return 0;
+}
+#endif
+
 static int fxgmac_map_rx_buffer(struct fxgmac_pdata* pdata,
 	struct fxgmac_ring* ring,
 	struct fxgmac_desc_data* desc_data)
 {
-#ifndef LINUX	
+#ifndef LINUX
     pdata = pdata;
     ring = ring;
     desc_data = desc_data;
 #else
-#if 0
-    int order, ret;
+#if 1
+    int ret;
 
     if (!ring->rx_hdr_pa.pages) {
     	ret = fxgmac_alloc_pages(pdata, &ring->rx_hdr_pa,
@@ -801,6 +845,7 @@ static int fxgmac_map_rx_buffer(struct fxgmac_pdata* pdata,
     		return ret;
     }
 
+#if  0
     if (!ring->rx_buf_pa.pages) {
     	order = max_t(int, PAGE_ALLOC_COSTLY_ORDER - 1, 0);
     	ret = fxgmac_alloc_pages(pdata, &ring->rx_buf_pa,
@@ -808,15 +853,18 @@ static int fxgmac_map_rx_buffer(struct fxgmac_pdata* pdata,
     	if (ret)
     		return ret;
     }
+#endif
 
     /* Set up the header page info */
     fxgmac_set_buffer_data(&desc_data->rx.hdr, &ring->rx_hdr_pa,
-    	FXGMAC_SKB_ALLOC_SIZE);
+    	pdata->rx_buf_size);
 
+#if 0
     /* Set up the buffer page info */
     fxgmac_set_buffer_data(&desc_data->rx.buf, &ring->rx_buf_pa,
     	pdata->rx_buf_size);
 #endif
+#else
     struct sk_buff *skb;
     skb = __netdev_alloc_skb_ip_align(pdata->netdev, pdata->rx_buf_size, GFP_ATOMIC);
     if (!skb) {
@@ -832,7 +880,7 @@ static int fxgmac_map_rx_buffer(struct fxgmac_pdata* pdata,
         dev_kfree_skb_any(skb);
         return -EINVAL;
     }
-
+#endif
 #endif
     return 0;
 }
@@ -867,7 +915,7 @@ static void fxgmac_tx_desc_init(struct fxgmac_pdata* pdata)
 
         /* Initialize Tx descriptor */
         fxgmac_desc_reset(desc_data);
-    }	
+    }
 
     ///* Update the total number of Tx descriptors */
     writereg(pdata->pAdapter, NIC_DEF_TBDS - 1, FXGMAC_DMA_REG(channel, DMA_CH_TDRLR));
@@ -981,7 +1029,7 @@ static void fxgmac_tx_desc_reset(struct fxgmac_desc_data* desc_data)
 
 static void fxgmac_tx_desc_init_channel(struct fxgmac_channel* channel)
 {
-#ifndef KDNET   
+#ifndef KDNET
     struct fxgmac_ring* ring = channel->tx_ring;
     struct fxgmac_desc_data* desc_data;
     int start_index = ring->cur;
@@ -998,8 +1046,9 @@ static void fxgmac_tx_desc_init_channel(struct fxgmac_channel* channel)
 
     ///* Update the total number of Tx descriptors */
     //writereg(ring->dma_desc_count - 1, FXGMAC_DMA_REG(channel, DMA_CH_TDRLR));
-
+#ifndef PXE
     writereg(channel->pdata->pAdapter, channel->pdata->tx_desc_count - 1, FXGMAC_DMA_REG(channel, DMA_CH_TDRLR));
+#endif
 
     /* Update the starting address of descriptor ring */
 #if defined(LINUX)
@@ -1074,7 +1123,7 @@ static void fxgmac_tx_desc_init(struct fxgmac_pdata* pdata)
 
         fxgmac_tx_desc_init_channel(channel);
     }
-#endif	
+#endif
 }
 
 static void fxgmac_rx_desc_reset(struct fxgmac_pdata* pdata,
@@ -1083,6 +1132,7 @@ static void fxgmac_rx_desc_reset(struct fxgmac_pdata* pdata,
 {
 #ifdef LINUX
     struct fxgmac_dma_desc* dma_desc = desc_data->dma_desc;
+    dma_addr_t hdr_dma;
 
     /* Reset the Rx descriptor
      *   Set buffer 1 (lo) address to header dma address (lo)
@@ -1091,10 +1141,10 @@ static void fxgmac_rx_desc_reset(struct fxgmac_pdata* pdata,
      *   Set buffer 2 (hi) address to buffer dma address (hi) and
      *     set control bits OWN and INTE
      */
-     //hdr_dma = desc_data->rx.hdr.dma_base + desc_data->rx.hdr.dma_off;
+     hdr_dma = desc_data->rx.hdr.dma_base + desc_data->rx.hdr.dma_off;
      //buf_dma = desc_data->rx.buf.dma_base + desc_data->rx.buf.dma_off;
-    dma_desc->desc0 = cpu_to_le32(lower_32_bits(desc_data->rx.buf.dma_base));
-    dma_desc->desc1 = cpu_to_le32(upper_32_bits(desc_data->rx.buf.dma_base));
+    dma_desc->desc0 = cpu_to_le32(lower_32_bits(hdr_dma));
+    dma_desc->desc1 = cpu_to_le32(upper_32_bits(hdr_dma));
     dma_desc->desc2 = 0;//cpu_to_le32(lower_32_bits(buf_dma));
     dma_desc->desc3 = 0;//cpu_to_le32(upper_32_bits(buf_dma));
     dma_desc->desc3 = FXGMAC_SET_REG_BITS_LE(
@@ -1138,9 +1188,9 @@ static void fxgmac_rx_desc_init_channel(struct fxgmac_channel* channel)
 {
     struct fxgmac_pdata* pdata = channel->pdata;
     struct fxgmac_ring* ring = channel->rx_ring;
-#ifdef LINUX	
+#ifdef LINUX
     unsigned int start_index = ring->cur;
-#endif	
+#endif
     struct fxgmac_desc_data* desc_data;
     unsigned int i;
 #if defined(UEFI)
@@ -1239,7 +1289,7 @@ static void fxgmac_rx_desc_init_channel(struct fxgmac_channel* channel)
 
 static void fxgmac_rx_desc_init(struct fxgmac_pdata* pdata)
 {
-#ifndef LINUX	
+#ifndef LINUX
     struct fxgmac_channel* channel;
     int Qid = 0;
 
@@ -1283,7 +1333,7 @@ static void fxgmac_rx_desc_init(struct fxgmac_pdata* pdata)
 
         fxgmac_rx_desc_init_channel(channel);
     }
-#endif	
+#endif
 }
 #endif
 #ifdef LINUX
@@ -1459,7 +1509,7 @@ void fxgmac_init_desc_ops(struct fxgmac_desc_ops* desc_ops)
     desc_ops->map_tx_skb = NULL;
 #else
     desc_ops->map_tx_skb = fxgmac_map_tx_skb;
-#endif	
+#endif
     desc_ops->map_rx_buffer = fxgmac_map_rx_buffer;
     desc_ops->unmap_desc_data = fxgmac_unmap_desc_data;
     desc_ops->tx_desc_init = fxgmac_tx_desc_init;
