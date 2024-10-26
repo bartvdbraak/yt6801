@@ -32,20 +32,10 @@ modules:
 	make -C $(KSRC) M=$(PWD) modules
 
 install:
-	@echo "KFILE: " $(KFILE)
-	@echo "KDST: " $(KDST)
 	make -C $(KSRC) M=$(PWD) INSTALL_MOD_DIR=$(KDST) modules_install
-	sudo ls -l $(ko_dir)
-	depmod $(shell uname -r)
-	modprobe $(KFILE)
-	@file $(ko_full)
-	@echo install done.
-	@modinfo $(ko_full)
 
 uninstall:
-	sudo ls -l $(ko_dir)
 	sudo rm $(ko_full)
-	sudo ls -l $(ko_dir)
 
 clean:
 	make -C $(KSRC) M=$(PWD) clean
